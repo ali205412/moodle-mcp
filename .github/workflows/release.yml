@@ -1,0 +1,96 @@
+name: Moodle Plugin Release
+
+# Triggers:
+# • Manually from the Actions tab
+# • Automatically when version.php is changed on the main branch
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'version.php'
+
+# Permissions required for tagging and creating releases
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+
+      # Checkout with full history (required for tags)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Extract the plugin version from version.php (works with $plugin->release and older formats)
+      - name: Extract version from version.php
+        id: version
+        run: |
+          VERSION=$(grep -Ei "release|version" version.php | grep -oE "'[^']*'" | tr -d "'" | head -n1 || echo "")
+          if [ -z "$VERSION" ]; then
+            echo "Error: Could not detect version in version.php"
+            exit 1
+          fi
+          echo "Detected plugin version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      # Define the tag name (standard vX.Y.Z format)
+      - name: Define tag name
+        id: tag
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Release tag: $TAG"
+
+      # Skip if tag already exists (prevents errors and keeps workflow green)
+      - name: Check if tag already exists
+        run: |
+          if git ls-remote --tags origin | grep -q "refs/tags/${{ steps.tag.outputs.tag }}$"; then
+            echo "Tag ${{ steps.tag.outputs.tag }} already exists – skipping release."
+            exit 0
+          fi
+
+      # Configure git identity
+      - name: Configure git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Create and push the git tag
+      - name: Create and push git tag
+        run: |
+          git tag ${{ steps.tag.outputs.tag }}
+          git push origin ${{ steps.tag.outputs.tag }}
+
+      # Create GitHub Release
+      # GitHub automatically adds "Source code (zip)" and "Source code (tar.gz)" as assets
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          body: |
+            **Moodle Plugin Release** – Version ${{ steps.version.outputs.version }}
+
+            This release was created automatically when `version.php` was updated.
+            
+            ${{ steps.Changelog.outputs.changelog }}
+
+            Download using the automatically generated assets:
+            • **Source code (zip)**
+            • **Source code (tar.gz)**
+
+            Ready for submission to the Moodle Plugins directory.
+          draft: false
+          prerelease: false
+
+      # Success message
+      - name: Release completed
+        run: |
+          echo "Release ${{ steps.tag.outputs.tag }} published successfully!"
+          echo "View at: https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.tag }}"
