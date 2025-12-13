@@ -16,6 +16,8 @@
 
 namespace webservice_mcp;
 
+use advanced_testcase;
+use core\exception\moodle_exception;
 use webservice_mcp\local\request;
 
 /**
@@ -28,7 +30,7 @@ use webservice_mcp\local\request;
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  * @covers      \webservice_mcp\local\request
  */
-final class request_test extends \advanced_testcase {
+final class request_test extends advanced_testcase {
     /**
      * Test valid JSON-RPC 2.0 request construction.
      */
@@ -118,7 +120,7 @@ final class request_test extends \advanced_testcase {
             'id' => 1,
         ];
 
-        $this->expectException(\core\exception\moodle_exception::class);
+        $this->expectException(moodle_exception::class);
         $this->expectExceptionMessage('JSON-RPC version must be 2.0');
         new request($data);
     }
@@ -135,7 +137,7 @@ final class request_test extends \advanced_testcase {
             'id' => 1,
         ];
 
-        $this->expectException(\core\exception\moodle_exception::class);
+        $this->expectException(moodle_exception::class);
         $this->expectExceptionMessage('JSON-RPC version must be 2.0');
         new request($data);
     }
@@ -151,7 +153,7 @@ final class request_test extends \advanced_testcase {
             'id' => 1,
         ];
 
-        $this->expectException(\core\exception\moodle_exception::class);
+        $this->expectException(moodle_exception::class);
         $this->expectExceptionMessage('Method field is required and must be a string');
         new request($data);
     }
@@ -168,7 +170,7 @@ final class request_test extends \advanced_testcase {
             'id' => 1,
         ];
 
-        $this->expectException(\core\exception\moodle_exception::class);
+        $this->expectException(moodle_exception::class);
         $this->expectExceptionMessage('Method field is required and must be a string');
         new request($data);
     }
@@ -185,7 +187,7 @@ final class request_test extends \advanced_testcase {
             'id' => 1,
         ];
 
-        $this->expectException(\core\exception\moodle_exception::class);
+        $this->expectException(moodle_exception::class);
         $this->expectExceptionMessage('Method field is required and must be a string');
         new request($data);
     }
