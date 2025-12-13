@@ -25,11 +25,9 @@
  */
 
 $string['err_empty_request'] = 'Request body is empty';
-$string['err_invalid_json'] = 'Invalid JSON: {$a}';
-$string['err_invalid_jsonrpc'] = 'Invalid JSON-RPC version: {$a}';
-$string['err_invalid_params'] = 'Invalid parameters: {$a}';
-$string['err_invalid_request'] = 'Invalid request: {$a}';
-$string['err_missing_method'] = 'Missing method: {$a}';
+$string['err_invalid_json'] = 'Invalid JSON';
+$string['err_invalid_jsonrpc'] = 'Invalid JSON-RPC version';
+$string['err_missing_method'] = 'Missing method';
 $string['err_missing_tool_name'] = 'Missing tool name';
 $string['mcp:use'] = 'Use MCP web service';
 $string['pluginname'] = 'Model Context Protocol';
