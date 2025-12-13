@@ -17,7 +17,7 @@
 namespace webservice_mcp;
 
 use advanced_testcase;
-use core\exception\moodle_exception;
+use moodle_exception;
 use Exception;
 use ReflectionClass;
 use webservice_mcp\local\request;

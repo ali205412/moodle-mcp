@@ -18,7 +18,7 @@ declare(strict_types=1);
 
 namespace webservice_mcp\local;
 
-use core\exception\moodle_exception;
+use moodle_exception;
 
 /**
  * Immutable and validated MCP JSON-RPC 2.0 request.

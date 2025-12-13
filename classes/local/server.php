@@ -18,10 +18,11 @@ declare(strict_types=1);
 
 namespace webservice_mcp\local;
 
-use core\exception\moodle_exception;
+use moodle_exception;
 use core_external\external_api;
 use Exception;
 use webservice_base_server;
+
 
 /**
  * MCP (Model Context Protocol) web service server implementation.
