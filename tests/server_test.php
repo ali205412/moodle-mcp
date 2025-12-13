@@ -36,7 +36,6 @@ require_once($CFG->dirroot . '/webservice/lib.php');
  * @copyright   2025 MohammadReza PourMohammad
  * @link        https://onbir.dev
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
- * @covers      \webservice_mcp\local\request
  * @covers      \webservice_mcp\local\server
  */
 final class server_test extends advanced_testcase {
