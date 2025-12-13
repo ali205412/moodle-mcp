@@ -1,4 +1,4 @@
-# MCP Web Service Plugin for Moodle
+# Moodle MCP Web Service Plugin
 
 A Moodle web service plugin that implements the **Model Context Protocol (MCP)** for seamless integration with AI assistants and external systems. This plugin exposes Moodle's external functions as MCP tools using JSON-RPC 2.0, making them discoverable and callable by MCP-compatible clients.
 
