@@ -334,6 +334,11 @@ class server extends webservice_base_server {
             return;
         }
 
+        // Fix arrays to be objects for tools/call format.
+        $validatedvalues = [
+            'result' => $validatedvalues,
+        ];
+
         $content = [
             'type' => 'text',
             'text' => json_encode($validatedvalues, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
