@@ -1,6 +1,9 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Version 0.4.0 (2025121301)
+- Fix: Simplified `moodle_exception` usage by using global class instead of namespaced version
+
 ## Version 0.3.0 (2025121300)
 - Initial beta release
 - MCP protocol implementation with JSON-RPC 2.0
