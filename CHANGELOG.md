@@ -1,7 +1,7 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
-## Version 0.3.0 (2025-12-13)
+## Version 0.3.0 (2025121300)
 - Initial beta release
 - MCP protocol implementation with JSON-RPC 2.0
 - Support for initialize, tools/list, and tools/call methods
