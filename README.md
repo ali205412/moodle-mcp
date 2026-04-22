@@ -1,16 +1,16 @@
 # Moodle MCP Web Service Plugin
 
-A Moodle web service plugin that implements the **Model Context Protocol (MCP)** for seamless integration with AI assistants and external systems. This plugin exposes Moodle's external functions as MCP tools using JSON-RPC 2.0, making them discoverable and callable by MCP-compatible clients.
+A Moodle web service plugin that implements the **Model Context Protocol (MCP)** for seamless integration with AI assistants and external systems. It exposes Moodle external functions as MCP tools, adds Moodle-native browser bootstrap for connector credentials, and serves both Streamable HTTP and legacy SSE-compatible transport endpoints.
 
 ## Features
 
-- **MCP Protocol Implementation**: Full support for Model Context Protocol using JSON-RPC 2.0
-- **Dynamic Tool Discovery**: Automatically exposes Moodle external functions as MCP tools
-- **JSON Schema Generation**: Converts Moodle parameter descriptions to JSON Schema for better tool documentation
-- **Token-based Authentication**: Secure access using Moodle's external service tokens
-- **Service-aware**: Only exposes functions available to the authenticated service
+- **Remote MCP Transport**: Streamable HTTP endpoint with optional legacy SSE compatibility
+- **Moodle Login Bootstrap**: Users can start from Moodle's normal login or SSO flow and receive revocable connector credentials
+- **Dynamic Tool Discovery**: Automatically harvests Moodle external functions and projects them as MCP tools
+- **Permission-gated Discovery**: Tool visibility is filtered by service scope, connector policy, and user permissions
+- **Workflow Metadata**: Adds curated surface, workflow, provenance, and risk hints on top of harvested Moodle APIs
 - **Well-tested**: Comprehensive PHPUnit test coverage
-- **Easy Integration**: Built-in client class for quick integration with other systems
+- **Wrapper Support**: Adds plugin-owned tools for high-value Moodle UI actions that do not have stable externals
 
 ## What is MCP?
 
@@ -61,7 +61,22 @@ This plugin bridges Moodle's web services with the MCP protocol, enabling AI ass
 1. Go to **Site administration → Plugins → Web services → Manage protocols**
 2. Enable **Model Context Protocol (MCP)**
 
-### 3. Create an External Service
+### 3. Grant Connector Access
+
+Ensure users who should use the connector have the `webservice/mcp:use` capability. The plugin's bootstrap path provisions and syncs its own Moodle external service automatically on first use, including the allowed-user service binding.
+
+### 4. Start the Browser Bootstrap Flow
+
+Recommended flow:
+
+1. Send the user to `/webservice/mcp/launch.php?format=json`
+2. If the Moodle site uses OAuth2 or SSO, the user follows Moodle's normal Moodle-managed login path
+3. If the user already has a valid Moodle session, the bootstrap can complete without another credential prompt
+4. The endpoint returns a short-lived connector credential payload for the MCP transport
+
+### 5. Optional Manual Service and Token Mode
+
+The server still accepts raw Moodle web service tokens if you want to use classic Moodle service/token administration instead of the connector bootstrap.
 
 1. Go to **Site administration → Server → Web services → External services**
 2. Click **Add** to create a new service
@@ -72,7 +87,7 @@ This plugin bridges Moodle's web services with the MCP protocol, enabling AI ass
    - **Authorized users only**: Yes (recommended)
 4. Add the external functions your service should expose
 
-### 4. Create a Token
+### 6. Create a Token
 
 1. Go to **Site administration → Server → Web services → Manage tokens**
 2. Click **Add** to create a new token
@@ -81,15 +96,29 @@ This plugin bridges Moodle's web services with the MCP protocol, enabling AI ass
    - **Service**: The service you created above
 4. Save and copy the generated token
 
-### 5. Assign Capability
-
-Ensure users have the `webservice/mcp:use` capability to access the MCP web service.
-
 ## Usage
 
-#### Endpoint URL
+#### Recommended Bootstrap Endpoint
 
-The MCP server endpoint can be accessed in two ways.
+```
+https://your-moodle-site.com/webservice/mcp/launch.php?format=json
+```
+
+#### MCP Transport Endpoints
+
+Primary Streamable HTTP transport:
+
+```
+https://your-moodle-site.com/webservice/mcp/server.php
+```
+
+Legacy SSE compatibility transport when enabled:
+
+```
+https://your-moodle-site.com/webservice/mcp/sse.php
+```
+
+The MCP transport can be authenticated in two ways.
 
 **1. Using query parameter (wstoken):**
 ```
@@ -108,7 +137,7 @@ Authorization: Bearer YOUR_TOKEN
 
 Replace:
 - `your-moodle-site.com` with your Moodle domain
-- `YOUR_TOKEN` with the token you generated
+- `YOUR_TOKEN` with either the connector credential returned by `launch.php` or a raw Moodle web service token
 
 
 #### Monitoring
@@ -364,12 +393,62 @@ webservice_mcp/
 
 ## Testing
 
-### Running Tests
+### Local Docker Test Runner
+
+This repository now includes a Docker Compose-based test runner that mirrors the `moodle-plugin-ci` flow used in GitHub Actions.
+
+```bash
+# Fast local check against the oldest supported branch on MariaDB.
+bash scripts/run-local-tests.sh
+
+# Run the same flow against PostgreSQL.
+bash scripts/run-local-tests.sh pgsql
+
+# Override the Moodle branch or enabled test steps.
+MOODLE_BRANCH=MOODLE_405_STABLE bash scripts/run-local-tests.sh
+TEST_STEPS="phplint validate savepoints phpunit phpcs" bash scripts/run-local-tests.sh
+```
+
+The Docker runner defaults to:
+- `MOODLE_BRANCH=MOODLE_402_STABLE`
+- `TEST_STEPS="phplint validate savepoints phpunit"`
+- `POSTGRES_IMAGE=postgres:16-alpine`
+
+You can also override the local database images explicitly when Docker Hub rate limits or local caches require it:
+
+```bash
+MARIADB_IMAGE=mariadb:12.3-ubi10-rc bash scripts/run-local-tests.sh
+POSTGRES_IMAGE=postgres:16-alpine bash scripts/run-local-tests.sh pgsql
+```
+
+It uses `docker-compose.test.yml`, `docker/plugin-ci/Dockerfile`, and `docker/plugin-ci/run-tests.sh`.
+
+### Installed Moodle PHPUnit
+
+If you already have the plugin mounted inside an installed Moodle dirroot with PHPUnit configured, you can still use Moodle's standard PHPUnit command:
 
 ```bash
 # Run all plugin tests
 vendor/bin/phpunit --testsuite webservice_mcp_testsuite
 ```
+
+### GitHub Actions CI
+
+`.github/workflows/ci.yml` now runs:
+- a PHPUnit matrix across `MOODLE_402_STABLE`, `MOODLE_403_STABLE`, `MOODLE_404_STABLE`, and `MOODLE_405_STABLE`
+- both `mariadb` and `pgsql` for the PHPUnit matrix
+- a separate quality job on `MOODLE_405_STABLE` for `phpmd`, `phpcs`, `phpdoc`, `mustache`, and `grunt`
+
+### Release Packaging
+
+The release workflow is tag-driven and builds a real Moodle plugin ZIP instead of relying on GitHub's generic source archive.
+
+```bash
+# Build the packaged release artifact locally.
+bash scripts/package-release.sh
+```
+
+This creates `dist/webservice_mcp-<release>.zip` with the correct Moodle plugin directory name `mcp/`.
 
 ### Test Coverage
 
@@ -423,6 +502,8 @@ The plugin includes comprehensive tests for:
 MCP requests are logged in Moodle's standard web service logs:
 - **Site administration → Reports → Logs**
 - Filter by "Web service" component
+
+Connector discovery and tool execution also emit plugin-local audit ids that are stored in the `webservice_mcp_audit` table.
 
 
 ## 💖 Support the development of this plugin

@@ -18,11 +18,18 @@ declare(strict_types=1);
 
 namespace webservice_mcp\local;
 
-use core_external\external_api;
+use context;
+use context_system;
 use core_external\external_description;
 use core_external\external_multiple_structure;
 use core_external\external_single_structure;
 use core_external\external_value;
+use webservice_mcp\local\catalog\catalog_builder;
+use webservice_mcp\local\catalog\schema_builder;
+use webservice_mcp\local\catalog\wrapper_registry;
+use webservice_mcp\local\discovery\eligibility_resolver;
+use webservice_mcp\local\discovery\risk_analyzer;
+use webservice_mcp\local\wrapper\manager as wrapper_manager;
 
 /**
  * Tool provider for MCP protocol.
@@ -39,6 +46,12 @@ use core_external\external_value;
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class tool_provider {
+    /** Default tools/list page size. */
+    private const DEFAULT_LIMIT = 100;
+
+    /** Maximum tools/list page size. */
+    private const MAX_LIMIT = 250;
+
     /**
      * Retrieve a list of available tools for a given token.
      *
@@ -51,44 +64,612 @@ class tool_provider {
      * @return array Array of tool definitions.
      */
     public static function get_tools(string $token): array {
+        return self::list_tools($token)['tools'];
+    }
+
+    /**
+     * Retrieve a structured tools/list payload for a token.
+     *
+     * @param string $token External service token.
+     * @param array $options Projection options.
+     * @return array
+     */
+    public static function list_tools(string $token, array $options = []): array {
         global $DB;
 
         $tokenrecord = $DB->get_record('external_tokens', ['token' => $token], '*', MUST_EXIST);
+        $options['restrictedcontext'] ??= context::instance_by_id((int)$tokenrecord->contextid);
+        $options['connector_mode'] ??= 'external_token';
 
-        $tools = [];
+        return self::list_tools_for_service_ids([(int)$tokenrecord->externalserviceid], $options);
+    }
 
-        // Query functions available for this service.
-        $functions = $DB->get_records(
-            'external_services_functions',
-            ['externalserviceid' => $tokenrecord->externalserviceid],
-            'functionname'
-        );
+    /**
+     * Retrieve a list of tools exposed by the supplied service ids.
+     *
+     * @param array $serviceids External service ids.
+     * @return array
+     */
+    public static function get_tools_for_service_ids(array $serviceids): array {
+        return self::list_tools_for_service_ids($serviceids)['tools'];
+    }
 
-        foreach ($functions as $function) {
-            $info = external_api::external_function_info($function->functionname);
+    /**
+     * Retrieve a structured tools/list payload for the supplied service ids.
+     *
+     * @param array $serviceids External service ids.
+     * @param array $options Projection options.
+     * @return array
+     */
+    public static function list_tools_for_service_ids(array $serviceids, array $options = []): array {
+        $serviceids = array_values(array_unique(array_map('intval', $serviceids)));
+        if ($serviceids === []) {
+            return [
+                'tools' => [],
+                'nextCursor' => null,
+                'groups' => [],
+                'coverage' => [],
+                'catalogVersion' => null,
+            ];
+        }
 
-            // Skip if function info is unavailable or deprecated.
-            if (empty($info) || !empty($info->deprecated)) {
+        $snapshot = (new catalog_builder())->get_snapshot();
+        $entries = self::entries_for_services($snapshot['entries'], $serviceids, (string)($options['group'] ?? ''));
+        $restrictedcontext = $options['restrictedcontext'] ?? context_system::instance();
+        $user = self::current_user($options['user'] ?? null);
+        $riskanalyzer = new risk_analyzer();
+        $eligibilityresolver = new eligibility_resolver();
+
+        $visibleentries = [];
+        foreach ($entries as $entry) {
+            $risk = $riskanalyzer->analyze($entry);
+            $eligibility = $eligibilityresolver->evaluate(
+                $entry,
+                $restrictedcontext,
+                $user,
+                $entries,
+                [
+                    'risk' => $risk,
+                    'connector_mode' => $options['connector_mode'] ?? 'default',
+                    'site_policy' => $options['site_policy'] ?? [],
+                ]
+            );
+
+            if (!$eligibility['visible']) {
                 continue;
             }
 
-            $inputschema = self::build_schema($info->parameters_desc);
-            $outputschema = self::build_schema($info->returns_desc);
+            $entry['risk'] = $risk;
+            $entry['eligibility'] = $eligibility;
+            $visibleentries[] = $entry;
+        }
 
-            $tools[] = [
-                'name' => $info->name,
-                'description' => $info->description ?? '',
-                'inputSchema' => $inputschema,
-                'outputSchema' => [
-                    'type' => 'object',
-                    'properties' => [
-                        'result' => $outputschema,
+        $groups = self::groups_for_entries($visibleentries, $snapshot['coverage']);
+        $wrapperdefinitions = [];
+        $wrappertools = [];
+        if (!empty($options['allow_wrappers'])) {
+            $wrapperdefinitions = (new wrapper_manager())->describe_discoverable($restrictedcontext, $user);
+            $wrappertools = array_values(array_map([self::class, 'project_wrapper_tool'], $wrapperdefinitions));
+            if ($wrappertools !== []) {
+                $groups[] = [
+                    'id' => 'operator',
+                    'label' => 'Operator',
+                    'count' => count($wrappertools),
+                ];
+            }
+        }
+
+        $alltools = array_values(array_merge(
+            array_values(array_map([self::class, 'project_tool'], $visibleentries)),
+            $wrappertools,
+        ));
+
+        $offset = self::cursor_offset($options['cursor'] ?? null);
+        $limit = self::limit($options['limit'] ?? null);
+        $visibletools = array_slice($alltools, $offset, $limit);
+        $nextcursor = ($offset + $limit) < count($alltools) ? (string)($offset + $limit) : null;
+
+        return [
+            'tools' => $visibletools,
+            'nextCursor' => $nextcursor,
+            'groups' => $groups,
+            'coverage' => self::coverage_for_group(
+                $snapshot['coverage'],
+                $visibleentries,
+                (string)($options['group'] ?? '')
+            ),
+            'catalogVersion' => $snapshot['signature'] ?? null,
+        ];
+    }
+
+    /**
+     * Filter snapshot entries down to the enabled tools for a service scope.
+     *
+     * @param array $entries Snapshot entries.
+     * @param array $serviceids Enabled service ids for this request.
+     * @param string $group Optional domain filter.
+     * @return array
+     */
+    private static function entries_for_services(array $entries, array $serviceids, string $group = ''): array {
+        $serviceidindex = array_fill_keys($serviceids, true);
+        $filtered = [];
+
+        foreach ($entries as $entry) {
+            if ($group !== '' && ($entry['domain'] ?? '') !== $group) {
+                continue;
+            }
+
+            $enabledserviceids = $entry['enabledserviceids'] ?? [];
+            foreach ($enabledserviceids as $serviceid) {
+                if (isset($serviceidindex[$serviceid])) {
+                    $filtered[] = $entry;
+                    break;
+                }
+            }
+        }
+
+        usort(
+            $filtered,
+            static fn(array $left, array $right): int =>
+                [$left['domain'], $left['name']] <=> [$right['domain'], $right['name']]
+        );
+
+        return $filtered;
+    }
+
+    /**
+     * Project one normalized catalog entry into an MCP tool definition.
+     *
+     * @param array $entry Snapshot entry.
+     * @return array
+     */
+    private static function project_tool(array $entry): array {
+        $surface = self::surface_metadata($entry);
+        $workflow = (new wrapper_registry())->for_tool($entry['name']);
+        $execution = self::execution_metadata($entry);
+
+        return [
+            'name' => $entry['name'],
+            'description' => $entry['description'],
+            'inputSchema' => $entry['inputSchema'],
+            'outputSchema' => [
+                'type' => 'object',
+                'properties' => [
+                    'result' => $entry['outputSchema'],
+                ],
+            ],
+            'annotations' => $entry['annotations'],
+            'x-moodle' => [
+                'component' => $entry['component'],
+                'domain' => $entry['domain'],
+                'mutability' => $entry['mutability'],
+                'capabilities' => $entry['capabilities'],
+                'provenance' => $entry['provenance'],
+                'transport' => $entry['transport'],
+                'eligibility' => $entry['eligibility'] ?? [],
+                'risk' => $entry['risk'] ?? [],
+                'surface' => $surface,
+                'workflow' => $workflow,
+                'execution' => $execution,
+                'services' => array_map(
+                    static fn(array $service): array => [
+                        'id' => $service['id'],
+                        'shortname' => $service['shortname'],
+                        'enabled' => $service['enabled'],
                     ],
+                    $entry['services']
+                ),
+            ],
+        ];
+    }
+
+    /**
+     * Project a discoverable wrapper definition into an MCP tool.
+     *
+     * @param array $definition Wrapper definition.
+     * @return array
+     */
+    private static function project_wrapper_tool(array $definition): array {
+        $workflow = (new wrapper_registry())->for_tool($definition['name']);
+        $destructive = in_array($definition['name'], [
+            'wrapper_course_delete_sections',
+            'wrapper_course_delete_modules',
+        ], true);
+
+        return [
+            'name' => $definition['name'],
+            'description' => $definition['description'],
+            'inputSchema' => $definition['inputSchema'],
+            'outputSchema' => [
+                'type' => 'object',
+                'properties' => [
+                    'result' => $definition['outputSchema'],
+                ],
+            ],
+            'annotations' => [
+                'readOnlyHint' => false,
+                'destructiveHint' => false,
+                'idempotentHint' => false,
+                'openWorldHint' => false,
+            ],
+            'x-moodle' => [
+                'component' => $definition['component'],
+                'domain' => $definition['domain'],
+                'mutability' => 'write',
+                'capabilities' => $definition['requiredCapabilities'],
+                'provenance' => [
+                    'source' => 'wrapper',
+                    'classname' => '',
+                    'methodname' => '',
+                    'classpath' => '',
+                ],
+                'transport' => [
+                    'allowedfromajax' => false,
+                    'loginrequired' => true,
+                    'readonlysession' => false,
+                ],
+                'eligibility' => [
+                    'status' => 'visible',
+                    'connectorMode' => 'connector',
+                    'callTimeChecks' => ['context', 'capability'],
+                    'resolvedCapabilities' => $definition['requiredCapabilities'],
+                    'deferredCapabilities' => [],
+                    'accessInformationTools' => [],
+                ],
+                'risk' => [
+                    'level' => 'high',
+                    'confirmationRequired' => true,
+                    'signals' => array_values(array_filter([
+                        'wrapper',
+                        'course_authoring',
+                        $destructive ? 'destructive_operation' : null,
+                    ])),
+                    'destructive' => $destructive,
+                    'capabilities' => array_map(
+                        static fn(string $capability): array => ['name' => $capability],
+                        $definition['requiredCapabilities']
+                    ),
+                ],
+                'surface' => ['surface' => 'operator', 'area' => 'authoring'],
+                'workflow' => $workflow,
+                'execution' => [
+                    'mode' => 'sync',
+                    'followupTools' => [],
+                    'notes' => [],
+                ],
+                'wrapper' => [
+                    'name' => $definition['name'],
+                    'domain' => $definition['domain'],
+                ],
+                'services' => [],
+            ],
+        ];
+    }
+
+    /**
+     * Derive curated surface metadata for core learning/personal/file tools.
+     *
+     * @param array $entry Catalog entry.
+     * @return array
+     */
+    private static function surface_metadata(array $entry): array {
+        $name = (string)$entry['name'];
+        $component = (string)($entry['component'] ?? '');
+
+        if (in_array($name, [
+            'core_course_get_categories',
+            'core_course_create_categories',
+            'core_course_update_categories',
+            'core_course_delete_categories',
+        ], true)) {
+            return ['surface' => 'operator', 'area' => 'categories'];
+        }
+
+        if (in_array($name, [
+            'core_course_create_courses',
+            'core_course_update_courses',
+            'core_course_delete_courses',
+            'core_course_duplicate_course',
+            'core_course_import_course',
+        ], true)) {
+            return ['surface' => 'operator', 'area' => 'courses'];
+        }
+
+        if (str_starts_with($name, 'core_courseformat_') || in_array($name, [
+            'core_course_edit_module',
+            'core_course_edit_section',
+            'core_course_delete_modules',
+            'core_course_toggle_activity_recommendation',
+            'core_course_get_activity_chooser_footer',
+            'core_course_get_module',
+        ], true)) {
+            return ['surface' => 'operator', 'area' => 'authoring'];
+        }
+
+        if (str_starts_with($name, 'core_course_')) {
+            return ['surface' => 'learning', 'area' => 'courses'];
+        }
+
+        if (str_starts_with($name, 'core_completion_')) {
+            return ['surface' => 'learning', 'area' => 'completion'];
+        }
+
+        if (str_starts_with($name, 'core_calendar_')) {
+            return ['surface' => 'personal', 'area' => 'calendar'];
+        }
+
+        if (str_starts_with($name, 'core_badges_')) {
+            return ['surface' => 'operator', 'area' => 'badges'];
+        }
+
+        if (str_starts_with($name, 'core_message_')) {
+            return ['surface' => 'personal', 'area' => 'messaging'];
+        }
+
+        if (str_starts_with($name, 'core_notes_')) {
+            return ['surface' => 'personal', 'area' => 'notes'];
+        }
+
+        if (in_array($name, [
+            'core_user_get_private_files_info',
+            'core_user_prepare_private_files_for_edition',
+            'core_user_add_user_private_files',
+            'core_user_update_private_files',
+        ], true)) {
+            return ['surface' => 'files', 'area' => 'private_files'];
+        }
+
+        if (in_array($name, [
+            'core_user_search_identity',
+            'core_user_get_users',
+            'core_user_get_users_by_field',
+            'core_user_create_users',
+            'core_user_update_users',
+            'core_user_delete_users',
+            'core_user_view_user_list',
+        ], true)) {
+            return ['surface' => 'operator', 'area' => 'users'];
+        }
+
+        if (str_starts_with($name, 'core_user_')) {
+            return ['surface' => 'personal', 'area' => 'profile'];
+        }
+
+        if (str_starts_with($name, 'core_files_')) {
+            return ['surface' => 'files', 'area' => 'draft_files'];
+        }
+
+        if (str_starts_with($name, 'core_enrol_') ||
+                str_starts_with($name, 'enrol_manual_') ||
+                str_starts_with($name, 'enrol_self_')) {
+            return ['surface' => 'operator', 'area' => 'enrolments'];
+        }
+
+        if (str_starts_with($name, 'core_group_')) {
+            return ['surface' => 'operator', 'area' => 'groups'];
+        }
+
+        if (str_starts_with($name, 'core_cohort_')) {
+            return ['surface' => 'operator', 'area' => 'cohorts'];
+        }
+
+        if (str_starts_with($name, 'core_role_')) {
+            return ['surface' => 'operator', 'area' => 'roles'];
+        }
+
+        if (str_starts_with($name, 'core_question_') || str_starts_with($name, 'qbank_')) {
+            return ['surface' => 'operator', 'area' => 'question_bank'];
+        }
+
+        if (str_starts_with($name, 'grade_') ||
+                str_starts_with($name, 'gradereport_') ||
+                str_starts_with($name, 'gradingform_')) {
+            return ['surface' => 'operator', 'area' => 'gradebook'];
+        }
+
+        if (str_starts_with($name, 'core_competency_')) {
+            return ['surface' => 'operator', 'area' => 'competencies'];
+        }
+
+        if (str_starts_with($name, 'tool_dataprivacy_')) {
+            return ['surface' => 'operator', 'area' => 'privacy'];
+        }
+
+        if (str_starts_with($component, 'mod_')) {
+            return ['surface' => 'activity', 'area' => self::activity_area_for_component($component)];
+        }
+
+        return ['surface' => 'general', 'area' => $entry['domain']];
+    }
+
+    /**
+     * Map a module component to a curated activity area label.
+     *
+     * @param string $component Module component.
+     * @return string
+     */
+    private static function activity_area_for_component(string $component): string {
+        return match ($component) {
+            'mod_assign' => 'assignments',
+            'mod_forum' => 'forums',
+            'mod_quiz' => 'quizzes',
+            'mod_workshop' => 'workshops',
+            'mod_feedback' => 'feedback',
+            'mod_chat' => 'chat',
+            'mod_glossary' => 'glossary',
+            'mod_wiki' => 'wiki',
+            'mod_data' => 'database',
+            'mod_choice' => 'choice',
+            'mod_survey' => 'survey',
+            'mod_scorm' => 'scorm',
+            'mod_h5pactivity' => 'h5pactivity',
+            'mod_bigbluebuttonbn' => 'bigbluebutton',
+            'mod_lti' => 'lti',
+            default => substr($component, 4),
+        };
+    }
+
+    /**
+     * Derive execution hints for tools that trigger async or long-running work.
+     *
+     * @param array $entry Catalog entry.
+     * @return array
+     */
+    private static function execution_metadata(array $entry): array {
+        $name = (string)$entry['name'];
+
+        if (in_array($name, [
+            'tool_dataprivacy_create_data_request',
+            'tool_dataprivacy_approve_data_request',
+            'tool_dataprivacy_bulk_approve_data_requests',
+            'tool_dataprivacy_deny_data_request',
+            'tool_dataprivacy_bulk_deny_data_requests',
+            'tool_dataprivacy_cancel_data_request',
+            'tool_dataprivacy_mark_complete',
+            'tool_dataprivacy_submit_selected_courses_form',
+            'tool_dataprivacy_confirm_contexts_for_deletion',
+        ], true)) {
+            return [
+                'mode' => 'async_request',
+                'followupTools' => [
+                    'tool_dataprivacy_get_data_request',
+                    'tool_dataprivacy_get_data_requests',
+                ],
+                'notes' => [
+                    'This call updates a privacy-request workflow that may complete after the initial response.',
                 ],
             ];
         }
 
-        return $tools;
+        if (in_array($name, [
+            'core_course_duplicate_course',
+            'core_course_import_course',
+            'core_course_delete_courses',
+            'core_course_delete_categories',
+        ], true)) {
+            return [
+                'mode' => 'long_running',
+                'followupTools' => [],
+                'notes' => [
+                    'This call may take noticeably longer than standard tool invocations on large sites.',
+                ],
+            ];
+        }
+
+        return [
+            'mode' => 'sync',
+            'followupTools' => [],
+            'notes' => [],
+        ];
+    }
+
+    /**
+     * Build structured group metadata for the current entry slice.
+     *
+     * @param array $entries Filtered snapshot entries.
+     * @param array $coverage Site-wide coverage summary.
+     * @return array
+     */
+    private static function groups_for_entries(array $entries, array $coverage): array {
+        $groups = [];
+        foreach ($entries as $entry) {
+            $domain = $entry['domain'];
+            if (!isset($groups[$domain])) {
+                $groups[$domain] = [
+                    'id' => $domain,
+                    'label' => $coverage[$domain]['label'] ?? ucfirst($domain),
+                    'count' => 0,
+                ];
+            }
+
+            $groups[$domain]['count']++;
+        }
+
+        ksort($groups);
+        return array_values($groups);
+    }
+
+    /**
+     * Return coverage metadata, optionally filtered to one domain.
+     *
+     * @param array $coverage Coverage summary keyed by domain.
+     * @param array $visibleentries Visible entries after filtering.
+     * @param string $group Optional domain filter.
+     * @return array
+     */
+    private static function coverage_for_group(array $coverage, array $visibleentries, string $group = ''): array {
+        $visiblecounts = [];
+        foreach ($visibleentries as $entry) {
+            $domain = $entry['domain'];
+            $visiblecounts[$domain] = ($visiblecounts[$domain] ?? 0) + 1;
+        }
+
+        $payload = [];
+        foreach ($coverage as $domain => $bucket) {
+            if ($group !== '' && $domain !== $group) {
+                continue;
+            }
+
+            $bucket['visibleTools'] = $visiblecounts[$domain] ?? 0;
+            $payload[] = $bucket;
+        }
+
+        return $payload;
+    }
+
+    /**
+     * Resolve the current user used for eligibility checks.
+     *
+     * @param mixed $user Optional explicit user object.
+     * @return object|null
+     */
+    private static function current_user(mixed $user): ?object {
+        if (is_object($user) && !empty($user->id)) {
+            return $user;
+        }
+
+        if (!empty($GLOBALS['USER']) && is_object($GLOBALS['USER']) && !empty($GLOBALS['USER']->id)) {
+            return $GLOBALS['USER'];
+        }
+
+        return null;
+    }
+
+    /**
+     * Normalize a cursor value into an offset.
+     *
+     * @param mixed $cursor Cursor input.
+     * @return int
+     */
+    private static function cursor_offset(mixed $cursor): int {
+        if (is_string($cursor) && ctype_digit($cursor)) {
+            return (int)$cursor;
+        }
+
+        if (is_int($cursor) && $cursor >= 0) {
+            return $cursor;
+        }
+
+        return 0;
+    }
+
+    /**
+     * Normalize requested page size.
+     *
+     * @param mixed $limit Requested limit.
+     * @return int
+     */
+    private static function limit(mixed $limit): int {
+        if (!is_int($limit) && !(is_string($limit) && ctype_digit($limit))) {
+            return self::DEFAULT_LIMIT;
+        }
+
+        $limit = (int)$limit;
+        if ($limit <= 0) {
+            return self::DEFAULT_LIMIT;
+        }
+
+        return min($limit, self::MAX_LIMIT);
     }
 
     /**
@@ -98,11 +679,7 @@ class tool_provider {
      * @return array JSON Schema representation.
      */
     protected static function build_schema(?external_description $desc): array {
-        if ($desc === null) {
-            return ['type' => 'object', 'properties' => []];
-        }
-
-        return self::generate_schema($desc);
+        return schema_builder::build($desc);
     }
 
     /**
@@ -115,61 +692,7 @@ class tool_provider {
      * @return array JSON Schema representation.
      */
     protected static function generate_schema(external_description $param): array {
-        $type = self::get_schema_type($param);
-        $schema = ['type' => $type];
-
-        // Handle external_value (simple types).
-        if ($param instanceof external_value) {
-            if (!empty($param->desc)) {
-                $schema['description'] = $param->desc;
-            }
-
-            // Mark as internally required for parent structure processing.
-            if ($param->required === VALUE_REQUIRED) {
-                $schema['_required'] = true;
-            }
-
-            return $schema;
-        }
-
-        // Handle external_single_structure (object).
-        if ($param instanceof external_single_structure) {
-            $schema['properties'] = [];
-            $requiredfields = [];
-
-            foreach ($param->keys as $key => $subparam) {
-                $subschema = self::generate_schema($subparam);
-
-                // Collect required fields at this level.
-                if (!empty($subschema['_required'])) {
-                    $requiredfields[] = $key;
-                }
-
-                // Remove internal marker before adding to schema.
-                unset($subschema['_required']);
-
-                $schema['properties'][$key] = $subschema;
-            }
-
-            if (!empty($requiredfields)) {
-                $schema['required'] = $requiredfields;
-            }
-
-            return $schema;
-        }
-
-        // Handle external_multiple_structure (array).
-        if ($param instanceof external_multiple_structure) {
-            $itemschema = self::generate_schema($param->content);
-
-            // Remove required marker from array items (not applicable).
-            unset($itemschema['_required']);
-
-            $schema['items'] = $itemschema;
-            return $schema;
-        }
-
-        return $schema;
+        return schema_builder::build($param);
     }
 
     /**

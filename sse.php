@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Capability definitions for the MCP web service plugin.
+ * Legacy SSE compatibility entry point for MCP transport.
  *
  * @package     webservice_mcp
  * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
@@ -24,21 +24,20 @@
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-defined('MOODLE_INTERNAL') || die();
+define('NO_DEBUG_DISPLAY', true);
+define('WS_SERVER', true);
 
-$capabilities = [
-    'webservice/mcp:use' => [
-        'captype' => 'read',
-        'contextlevel' => CONTEXT_SYSTEM,
-        'archetypes' => [
-            'manager' => CAP_ALLOW,
-        ],
-    ],
-    'webservice/mcp:manageconnectors' => [
-        'captype' => 'write',
-        'contextlevel' => CONTEXT_SYSTEM,
-        'archetypes' => [
-            'manager' => CAP_ALLOW,
-        ],
-    ],
-];
+require('../../config.php');
+
+if (!webservice_protocol_is_enabled('mcp')) {
+    header("HTTP/1.0 403 Forbidden");
+    debugging(
+        'The server died because the web services or the MCP protocol are not enabled',
+        DEBUG_DEVELOPER
+    );
+    die;
+}
+
+$controller = new \webservice_mcp\local\transport\sse_controller(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
+$controller->run();
+die;

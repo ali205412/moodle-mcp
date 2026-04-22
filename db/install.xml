@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<XMLDB PATH="webservice/mcp/db" VERSION="2026042104" COMMENT="XMLDB file for Moodle webservice_mcp"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
+>
+  <TABLES>
+    <TABLE NAME="webservice_mcp_credential" COMMENT="Plugin-managed connector credentials for Moodle MCP bootstrap and remote access.">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="usermodified" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="The Moodle user this connector credential belongs to."/>
+        <FIELD NAME="token" TYPE="char" LENGTH="128" NOTNULL="true" SEQUENCE="false" COMMENT="Opaque connector credential token."/>
+        <FIELD NAME="name" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Human-readable label for operator inspection."/>
+        <FIELD NAME="serviceidentifier" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Connector-managed service boundary identifier."/>
+        <FIELD NAME="contextid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Restricted context anchor for connector credential use."/>
+        <FIELD NAME="tokentype" TYPE="int" LENGTH="4" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="0=session-linked or short-lived bootstrap credential, 1=durable remote grant."/>
+        <FIELD NAME="sid" TYPE="char" LENGTH="128" NOTNULL="false" SEQUENCE="false" COMMENT="Linked browser session identifier when bootstrap is session-bound."/>
+        <FIELD NAME="validuntil" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="Credential expiry timestamp."/>
+        <FIELD NAME="iprestriction" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="Optional IP restriction for credential use."/>
+        <FIELD NAME="lastaccess" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="Last successful use timestamp."/>
+        <FIELD NAME="revoked" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Whether the connector credential has been revoked."/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="userid_fk" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+        <KEY NAME="usermodified_fk" TYPE="foreign" FIELDS="usermodified" REFTABLE="user" REFFIELDS="id"/>
+        <KEY NAME="contextid_fk" TYPE="foreign" FIELDS="contextid" REFTABLE="context" REFFIELDS="id"/>
+        <KEY NAME="uniq_token" TYPE="unique" FIELDS="token"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="userid_idx" UNIQUE="false" FIELDS="userid"/>
+        <INDEX NAME="sid_idx" UNIQUE="false" FIELDS="sid"/>
+        <INDEX NAME="service_ctx_idx" UNIQUE="false" FIELDS="serviceidentifier, contextid"/>
+      </INDEXES>
+    </TABLE>
+    <TABLE NAME="webservice_mcp_audit" COMMENT="Audit trail for connector discovery and tool execution.">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="Moodle user associated with the transport action."/>
+        <FIELD NAME="credentialid" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="Connector credential used for the transport action, when present."/>
+        <FIELD NAME="contextid" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="Restricted context for the request."/>
+        <FIELD NAME="serviceid" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="Resolved external service id for the request."/>
+        <FIELD NAME="sessionid" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="MCP transport session id."/>
+        <FIELD NAME="requestid" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="JSON-RPC request id."/>
+        <FIELD NAME="action" TYPE="char" LENGTH="32" NOTNULL="true" DEFAULT="request" SEQUENCE="false" COMMENT="Audit action type such as discover or tool_call."/>
+        <FIELD NAME="toolname" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="Tool name for tool-call events."/>
+        <FIELD NAME="mutating" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Whether the audited request mutates Moodle state."/>
+        <FIELD NAME="outcome" TYPE="char" LENGTH="32" NOTNULL="true" DEFAULT="success" SEQUENCE="false" COMMENT="Result outcome such as success or error."/>
+        <FIELD NAME="detailcode" TYPE="char" LENGTH="64" NOTNULL="false" SEQUENCE="false" COMMENT="Optional restriction or error code."/>
+        <FIELD NAME="auditid" TYPE="char" LENGTH="64" NOTNULL="true" SEQUENCE="false" COMMENT="Stable public audit identifier returned to clients."/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="userid_fk" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+        <KEY NAME="credentialid_fk" TYPE="foreign" FIELDS="credentialid" REFTABLE="webservice_mcp_credential" REFFIELDS="id"/>
+        <KEY NAME="contextid_fk" TYPE="foreign" FIELDS="contextid" REFTABLE="context" REFFIELDS="id"/>
+        <KEY NAME="serviceid_fk" TYPE="foreign" FIELDS="serviceid" REFTABLE="external_services" REFFIELDS="id"/>
+        <KEY NAME="uniq_auditid" TYPE="unique" FIELDS="auditid"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="timecreated_idx" UNIQUE="false" FIELDS="timecreated"/>
+        <INDEX NAME="userid_idx" UNIQUE="false" FIELDS="userid"/>
+        <INDEX NAME="action_idx" UNIQUE="false" FIELDS="action"/>
+      </INDEXES>
+    </TABLE>
+  </TABLES>
+</XMLDB>

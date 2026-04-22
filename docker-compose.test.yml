@@ -1,0 +1,72 @@
+name: moodle-mcp-test
+
+services:
+  mariadb:
+    image: ${MARIADB_IMAGE:-mariadb:10.11}
+    environment:
+      MYSQL_USER: root
+      MYSQL_ALLOW_EMPTY_PASSWORD: "true"
+      MYSQL_CHARACTER_SET_SERVER: utf8mb4
+      MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u root --password=''"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  pgsql:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    profiles: ["pgsql"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  plugin-ci:
+    build:
+      context: .
+      dockerfile: docker/plugin-ci/Dockerfile
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      DB: mariadb
+      DB_HOST: mariadb
+      MOODLE_BRANCH: ${MOODLE_BRANCH:-MOODLE_402_STABLE}
+      MOODLE_PLUGIN_CI_VERSION: ${MOODLE_PLUGIN_CI_VERSION:-^4}
+      TEST_STEPS: ${TEST_STEPS:-phplint validate savepoints phpunit}
+    volumes:
+      - .:/plugin
+      - plugin-ci-cache:/opt/moodle-plugin-ci
+      - composer-cache:/tmp/composer
+    working_dir: /plugin
+    command: ["/usr/local/bin/run-plugin-ci"]
+
+  plugin-ci-pgsql:
+    build:
+      context: .
+      dockerfile: docker/plugin-ci/Dockerfile
+    profiles: ["pgsql"]
+    depends_on:
+      pgsql:
+        condition: service_healthy
+    environment:
+      DB: pgsql
+      DB_HOST: pgsql
+      MOODLE_BRANCH: ${MOODLE_BRANCH:-MOODLE_402_STABLE}
+      MOODLE_PLUGIN_CI_VERSION: ${MOODLE_PLUGIN_CI_VERSION:-^4}
+      TEST_STEPS: ${TEST_STEPS:-phplint validate savepoints phpunit}
+    volumes:
+      - .:/plugin
+      - plugin-ci-cache:/opt/moodle-plugin-ci
+      - composer-cache:/tmp/composer
+    working_dir: /plugin
+    command: ["/usr/local/bin/run-plugin-ci"]
+
+volumes:
+  plugin-ci-cache:
+  composer-cache:

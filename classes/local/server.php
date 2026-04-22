@@ -18,6 +18,9 @@ declare(strict_types=1);
 
 namespace webservice_mcp\local;
 
+global $CFG;
+require_once($CFG->dirroot . '/webservice/lib.php');
+
 use moodle_exception;
 use core_external\external_api;
 use Exception;
@@ -39,13 +42,13 @@ use webservice_base_server;
  */
 class server extends webservice_base_server {
     /** @var string Protocol version supported by this server. */
-    private const PROTOCOL_VERSION = '2025-03-26';
+    protected const PROTOCOL_VERSION = '2025-03-26';
 
     /** @var string Server name. */
-    private const SERVER_NAME = 'Moodle MCP Server';
+    protected const SERVER_NAME = 'Moodle MCP Server';
 
     /** @var string Server version. */
-    private const SERVER_VERSION = '1.0.0';
+    protected const SERVER_VERSION = '1.0.0';
 
     /** @var string HTTP request method. */
     protected string $httpmethod;
@@ -247,9 +250,9 @@ class server extends webservice_base_server {
      */
     protected function send_server_info(): void {
         $response = [
-            'name' => self::SERVER_NAME,
-            'version' => self::SERVER_VERSION,
-            'protocolVersion' => self::PROTOCOL_VERSION,
+            'name' => static::SERVER_NAME,
+            'version' => static::SERVER_VERSION,
+            'protocolVersion' => static::PROTOCOL_VERSION,
             'capabilities' => [
                 'tools' => ['listChanged' => true],
             ],
@@ -265,13 +268,13 @@ class server extends webservice_base_server {
      */
     protected function send_initialize_response(): void {
         $result = [
-            'protocolVersion' => self::PROTOCOL_VERSION,
+            'protocolVersion' => static::PROTOCOL_VERSION,
             'capabilities' => [
                 'tools' => ['listChanged' => true],
             ],
             'serverInfo' => [
-                'name' => self::SERVER_NAME,
-                'version' => self::SERVER_VERSION,
+                'name' => static::SERVER_NAME,
+                'version' => static::SERVER_VERSION,
             ],
             'instructions' => 'Moodle MCP server initialized successfully',
         ];
@@ -407,7 +410,7 @@ class server extends webservice_base_server {
         }
 
         return [
-            'jsonrpc' => $this->mcprequest->id ?? '2.0',
+            'jsonrpc' => $this->mcprequest->jsonrpc ?? '2.0',
             'error' => [
                 'code' => $code,
                 'message' => $ex->getMessage(),

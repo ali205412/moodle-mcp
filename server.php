@@ -46,7 +46,7 @@ if (!webservice_protocol_is_enabled('mcp')) {
     die;
 }
 
-// Instantiate and run the MCP server.
-$server = new \webservice_mcp\local\server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
+// Instantiate and run the MCP transport server.
+$server = new \webservice_mcp\local\transport\server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
 $server->run();
 die;
