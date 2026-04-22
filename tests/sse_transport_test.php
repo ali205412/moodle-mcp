@@ -14,6 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+/**
+ * PHPUnit tests for SSE transport compatibility behavior.
+ *
+ * @package     webservice_mcp
+ * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
+ * @copyright   2025 MohammadReza PourMohammad
+ * @link        https://onbir.dev
+ * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
 namespace webservice_mcp;
 
 use advanced_testcase;
@@ -22,9 +32,8 @@ use stdClass;
 use webservice_mcp\local\auth\credential_manager;
 use webservice_mcp\local\auth\transport_identity;
 use webservice_mcp\local\transport\protocol_headers;
-use webservice_mcp\local\transport\sse_controller;
 
-defined('MOODLE_INTERNAL') || die();
+require_once(__DIR__ . '/fixtures/testable_sse_controller.php');
 
 /**
  * Tests for SSE transport compatibility behavior.
@@ -136,121 +145,5 @@ final class sse_transport_test extends advanced_testcase {
         $this->assertStringContainsString('event: message', $controller->capturedbody);
         $this->assertStringContainsString('id: 1', $controller->capturedbody);
         $this->assertStringContainsString('"result":{"ok":true}', $controller->capturedbody);
-    }
-}
-
-/**
- * Test double for SSE controller behavior.
- */
-final class testable_sse_controller extends sse_controller {
-    /** @var string */
-    public string $capturedbody = '';
-
-    /** @var array */
-    public array $capturedheaders = [];
-
-    /** @var int */
-    public int $capturedstatus = 200;
-
-    /** @var bool */
-    public bool $authcalled = false;
-
-    /**
-     * Apply a public token without reading request globals.
-     *
-     * @param string $token Connector token.
-     * @return void
-     */
-    public function set_public_token_for_test(string $token): void {
-        $this->publictoken = $token;
-        $this->token = $token;
-    }
-
-    /**
-     * Apply a resolved identity.
-     *
-     * @param stdClass $identity Transport identity.
-     * @return void
-     */
-    public function apply_identity_for_test(stdClass $identity): void {
-        $this->authenticate_transport_identity($identity);
-    }
-
-    /**
-     * Seed transport request metadata.
-     *
-     * @param array $requestdata Transport request data.
-     * @return void
-     */
-    public function set_transport_request_for_test(array $requestdata): void {
-        $this->transportrequest = $requestdata;
-    }
-
-    /**
-     * Create a session through the protected helper.
-     *
-     * @return string
-     */
-    public function create_transport_session_for_test(): string {
-        return $this->create_transport_session();
-    }
-
-    /**
-     * Append a replay event.
-     *
-     * @param string $sessionid Session id.
-     * @param array $event Event data.
-     * @return int
-     */
-    public function append_replay_event_for_test(string $sessionid, array $event): int {
-        return $this->replaystore->append_event($sessionid, $event);
-    }
-
-    /**
-     * Track auth calls during controller runs.
-     *
-     * @return void
-     */
-    protected function authenticate_user(): void {
-        $this->authcalled = true;
-        parent::authenticate_user();
-    }
-
-    /**
-     * Capture headers for assertions.
-     *
-     * @param string $header Header line.
-     * @return void
-     */
-    protected function send_header(string $header): void {
-        $this->capturedheaders[] = $header;
-    }
-
-    /**
-     * Capture response status for assertions.
-     *
-     * @param int $status Status code.
-     * @return void
-     */
-    protected function set_status(int $status): void {
-        $this->capturedstatus = $status;
-    }
-
-    /**
-     * Capture output instead of echoing to stdout.
-     *
-     * @param string $body Response body chunk.
-     * @return void
-     */
-    protected function emit(string $body): void {
-        $this->capturedbody .= $body;
-    }
-
-    /**
-     * Avoid mutating the real test-process PHP session.
-     *
-     * @return void
-     */
-    protected function close_session_for_transport(): void {
     }
 }

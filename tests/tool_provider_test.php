@@ -675,36 +675,38 @@ final class tool_provider_test extends externallib_advanced_testcase {
         $result = tool_provider::list_tools_for_service_ids([$serviceid], ['limit' => 50]);
         $tools = array_column($result['tools'], null, 'name');
 
-        foreach ([
-            'badge' => [
-                'area' => 'badges',
-                'workflow' => 'workflow_badge_management',
-                'candidates' => [
-                    'core_badges_get_badge',
-                    'core_badges_get_user_badges',
-                    'core_badges_enable_badges',
+        foreach (
+            [
+                'badge' => [
+                    'area' => 'badges',
+                    'workflow' => 'workflow_badge_management',
+                    'candidates' => [
+                        'core_badges_get_badge',
+                        'core_badges_get_user_badges',
+                        'core_badges_enable_badges',
+                    ],
                 ],
-            ],
-            'question' => [
-                'area' => 'question_bank',
-                'workflow' => 'workflow_question_bank_management',
-                'candidates' => [
-                    'qbank_managecategories_move_category',
-                    'qbank_tagquestion_submit_tags_form',
-                    'core_question_update_flag',
+                'question' => [
+                    'area' => 'question_bank',
+                    'workflow' => 'workflow_question_bank_management',
+                    'candidates' => [
+                        'qbank_managecategories_move_category',
+                        'qbank_tagquestion_submit_tags_form',
+                        'core_question_update_flag',
+                    ],
                 ],
-            ],
-            'grade' => [
-                'area' => 'gradebook',
-                'workflow' => 'workflow_gradebook_management',
-                'candidates' => [
-                    'grade_get_grade_tree',
-                    'grade_create_gradecategories',
-                    'gradereport_user_get_grade_items',
-                    'gradingform_rubric_grader_gradingpanel_fetch',
+                'grade' => [
+                    'area' => 'gradebook',
+                    'workflow' => 'workflow_gradebook_management',
+                    'candidates' => [
+                        'grade_get_grade_tree',
+                        'grade_create_gradecategories',
+                        'gradereport_user_get_grade_items',
+                        'gradingform_rubric_grader_gradingpanel_fetch',
+                    ],
                 ],
-            ],
-        ] as $group) {
+            ] as $group
+        ) {
             $toolname = null;
             foreach ($group['candidates'] as $candidate) {
                 if (isset($tools[$candidate])) {

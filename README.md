@@ -443,6 +443,8 @@ vendor/bin/phpunit --testsuite webservice_mcp_testsuite
 
 The release workflow is tag-driven and builds a real Moodle plugin ZIP instead of relying on GitHub's generic source archive.
 
+Successful CI on `main` now auto-creates the matching `v<release>` tag when that tag does not already exist. The tag push then triggers the release workflow, which publishes the packaged ZIP as a GitHub Release asset.
+
 ```bash
 # Build the packaged release artifact locally.
 bash scripts/package-release.sh

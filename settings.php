@@ -14,6 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+/**
+ * Plugin settings for the Moodle MCP web service plugin.
+ *
+ * @package     webservice_mcp
+ * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
+ * @copyright   2025 MohammadReza PourMohammad
+ * @link        https://onbir.dev
+ * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
 defined('MOODLE_INTERNAL') || die();
 
 if ($hassiteconfig && $settings instanceof admin_settingpage && $ADMIN->fulltree) {

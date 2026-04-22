@@ -14,6 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+/**
+ * Browser bootstrap entrypoint for Moodle MCP connector credentials.
+ *
+ * @package     webservice_mcp
+ * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
+ * @copyright   2025 MohammadReza PourMohammad
+ * @link        https://onbir.dev
+ * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
 require('../../config.php');
 
 $issuerid = optional_param('issuerid', 0, PARAM_INT);

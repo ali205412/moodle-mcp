@@ -18,13 +18,17 @@ declare(strict_types=1);
 
 namespace webservice_mcp\local;
 
-global $CFG;
-require_once($CFG->dirroot . '/webservice/lib.php');
-
-use moodle_exception;
 use core_external\external_api;
 use Exception;
+use moodle_exception;
 use webservice_base_server;
+
+// The legacy server extends a class declared in webservice/lib.php, so the
+// upstream file must be loaded before the class declaration is parsed.
+// phpcs:disable moodle.Files.MoodleInternal.MoodleInternalGlobalState
+global $CFG;
+require_once($CFG->dirroot . '/webservice/lib.php');
+// phpcs:enable
 
 
 /**

@@ -14,13 +14,23 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+/**
+ * PHPUnit tests for harvested catalog building and coverage reporting.
+ *
+ * @package     webservice_mcp
+ * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
+ * @copyright   2025 MohammadReza PourMohammad
+ * @link        https://onbir.dev
+ * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
 namespace webservice_mcp;
 
 use advanced_testcase;
 use webservice_mcp\local\catalog\catalog_builder;
 use webservice_mcp\local\catalog\wrapper_registry;
 
-defined('MOODLE_INTERNAL') || die();
+require_once(__DIR__ . '/fixtures/testable_catalog_builder.php');
 
 /**
  * Tests for harvested catalog building and coverage reporting.
@@ -124,37 +134,5 @@ final class catalog_builder_test extends advanced_testcase {
 
         $this->assertSame(1, $coverage['local']['wrapped']);
         $this->assertSame(0, $coverage['local']['unsupported']);
-    }
-}
-
-/**
- * Testable catalog builder with injectable component inventory.
- */
-final class testable_catalog_builder extends catalog_builder {
-    /** @var array */
-    private array $componentlistoverride;
-
-    /**
-     * Constructor.
-     *
-     * @param wrapper_registry|null $wrapperregistry Optional wrapper registry override.
-     * @param array $componentlistoverride Override installed component inventory.
-     */
-    public function __construct(?wrapper_registry $wrapperregistry = null, array $componentlistoverride = []) {
-        parent::__construct($wrapperregistry);
-        $this->componentlistoverride = $componentlistoverride;
-    }
-
-    /**
-     * Override component inventory for coverage tests.
-     *
-     * @return array
-     */
-    protected function component_list(): array {
-        if ($this->componentlistoverride !== []) {
-            return $this->componentlistoverride;
-        }
-
-        return parent::component_list();
     }
 }

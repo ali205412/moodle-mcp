@@ -171,8 +171,10 @@ class eligibility_resolver {
                 continue;
             }
 
-            if (preg_match('/_get_.*access_information$/', $name) === 1 ||
-                    preg_match('/_get_access_information$/', $name) === 1) {
+            if (
+                preg_match('/_get_.*access_information$/', $name) === 1 ||
+                preg_match('/_get_access_information$/', $name) === 1
+            ) {
                 $tools[] = $name;
             }
         }

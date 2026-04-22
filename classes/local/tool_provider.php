@@ -356,33 +356,48 @@ class tool_provider {
         $name = (string)$entry['name'];
         $component = (string)($entry['component'] ?? '');
 
-        if (in_array($name, [
-            'core_course_get_categories',
-            'core_course_create_categories',
-            'core_course_update_categories',
-            'core_course_delete_categories',
-        ], true)) {
+        if (in_array(
+            $name,
+            [
+                'core_course_get_categories',
+                'core_course_create_categories',
+                'core_course_update_categories',
+                'core_course_delete_categories',
+            ],
+            true
+        )) {
             return ['surface' => 'operator', 'area' => 'categories'];
         }
 
-        if (in_array($name, [
-            'core_course_create_courses',
-            'core_course_update_courses',
-            'core_course_delete_courses',
-            'core_course_duplicate_course',
-            'core_course_import_course',
-        ], true)) {
+        if (in_array(
+            $name,
+            [
+                'core_course_create_courses',
+                'core_course_update_courses',
+                'core_course_delete_courses',
+                'core_course_duplicate_course',
+                'core_course_import_course',
+            ],
+            true
+        )) {
             return ['surface' => 'operator', 'area' => 'courses'];
         }
 
-        if (str_starts_with($name, 'core_courseformat_') || in_array($name, [
-            'core_course_edit_module',
-            'core_course_edit_section',
-            'core_course_delete_modules',
-            'core_course_toggle_activity_recommendation',
-            'core_course_get_activity_chooser_footer',
-            'core_course_get_module',
-        ], true)) {
+        if (
+            str_starts_with($name, 'core_courseformat_') ||
+            in_array(
+                $name,
+                [
+                    'core_course_edit_module',
+                    'core_course_edit_section',
+                    'core_course_delete_modules',
+                    'core_course_toggle_activity_recommendation',
+                    'core_course_get_activity_chooser_footer',
+                    'core_course_get_module',
+                ],
+                true
+            )
+        ) {
             return ['surface' => 'operator', 'area' => 'authoring'];
         }
 
@@ -410,24 +425,32 @@ class tool_provider {
             return ['surface' => 'personal', 'area' => 'notes'];
         }
 
-        if (in_array($name, [
-            'core_user_get_private_files_info',
-            'core_user_prepare_private_files_for_edition',
-            'core_user_add_user_private_files',
-            'core_user_update_private_files',
-        ], true)) {
+        if (in_array(
+            $name,
+            [
+                'core_user_get_private_files_info',
+                'core_user_prepare_private_files_for_edition',
+                'core_user_add_user_private_files',
+                'core_user_update_private_files',
+            ],
+            true
+        )) {
             return ['surface' => 'files', 'area' => 'private_files'];
         }
 
-        if (in_array($name, [
-            'core_user_search_identity',
-            'core_user_get_users',
-            'core_user_get_users_by_field',
-            'core_user_create_users',
-            'core_user_update_users',
-            'core_user_delete_users',
-            'core_user_view_user_list',
-        ], true)) {
+        if (in_array(
+            $name,
+            [
+                'core_user_search_identity',
+                'core_user_get_users',
+                'core_user_get_users_by_field',
+                'core_user_create_users',
+                'core_user_update_users',
+                'core_user_delete_users',
+                'core_user_view_user_list',
+            ],
+            true
+        )) {
             return ['surface' => 'operator', 'area' => 'users'];
         }
 
@@ -439,9 +462,11 @@ class tool_provider {
             return ['surface' => 'files', 'area' => 'draft_files'];
         }
 
-        if (str_starts_with($name, 'core_enrol_') ||
-                str_starts_with($name, 'enrol_manual_') ||
-                str_starts_with($name, 'enrol_self_')) {
+        if (
+            str_starts_with($name, 'core_enrol_') ||
+            str_starts_with($name, 'enrol_manual_') ||
+            str_starts_with($name, 'enrol_self_')
+        ) {
             return ['surface' => 'operator', 'area' => 'enrolments'];
         }
 
@@ -457,13 +482,18 @@ class tool_provider {
             return ['surface' => 'operator', 'area' => 'roles'];
         }
 
-        if (str_starts_with($name, 'core_question_') || str_starts_with($name, 'qbank_')) {
+        if (
+            str_starts_with($name, 'core_question_') ||
+            str_starts_with($name, 'qbank_')
+        ) {
             return ['surface' => 'operator', 'area' => 'question_bank'];
         }
 
-        if (str_starts_with($name, 'grade_') ||
-                str_starts_with($name, 'gradereport_') ||
-                str_starts_with($name, 'gradingform_')) {
+        if (
+            str_starts_with($name, 'grade_') ||
+            str_starts_with($name, 'gradereport_') ||
+            str_starts_with($name, 'gradingform_')
+        ) {
             return ['surface' => 'operator', 'area' => 'gradebook'];
         }
 
@@ -518,17 +548,21 @@ class tool_provider {
     private static function execution_metadata(array $entry): array {
         $name = (string)$entry['name'];
 
-        if (in_array($name, [
-            'tool_dataprivacy_create_data_request',
-            'tool_dataprivacy_approve_data_request',
-            'tool_dataprivacy_bulk_approve_data_requests',
-            'tool_dataprivacy_deny_data_request',
-            'tool_dataprivacy_bulk_deny_data_requests',
-            'tool_dataprivacy_cancel_data_request',
-            'tool_dataprivacy_mark_complete',
-            'tool_dataprivacy_submit_selected_courses_form',
-            'tool_dataprivacy_confirm_contexts_for_deletion',
-        ], true)) {
+        if (in_array(
+            $name,
+            [
+                'tool_dataprivacy_create_data_request',
+                'tool_dataprivacy_approve_data_request',
+                'tool_dataprivacy_bulk_approve_data_requests',
+                'tool_dataprivacy_deny_data_request',
+                'tool_dataprivacy_bulk_deny_data_requests',
+                'tool_dataprivacy_cancel_data_request',
+                'tool_dataprivacy_mark_complete',
+                'tool_dataprivacy_submit_selected_courses_form',
+                'tool_dataprivacy_confirm_contexts_for_deletion',
+            ],
+            true
+        )) {
             return [
                 'mode' => 'async_request',
                 'followupTools' => [
@@ -541,12 +575,16 @@ class tool_provider {
             ];
         }
 
-        if (in_array($name, [
-            'core_course_duplicate_course',
-            'core_course_import_course',
-            'core_course_delete_courses',
-            'core_course_delete_categories',
-        ], true)) {
+        if (in_array(
+            $name,
+            [
+                'core_course_duplicate_course',
+                'core_course_import_course',
+                'core_course_delete_courses',
+                'core_course_delete_categories',
+            ],
+            true
+        )) {
             return [
                 'mode' => 'long_running',
                 'followupTools' => [],
