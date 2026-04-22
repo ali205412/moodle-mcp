@@ -1,515 +1,364 @@
-# Moodle MCP Web Service Plugin
+# Moodle MCP
 
-A Moodle web service plugin that implements the **Model Context Protocol (MCP)** for seamless integration with AI assistants and external systems. It exposes Moodle external functions as MCP tools, adds Moodle-native browser bootstrap for connector credentials, and serves both Streamable HTTP and legacy SSE-compatible transport endpoints.
+`webservice_mcp` is a Moodle web service plugin that turns Moodle into a plugin-first MCP connector.
 
-## Features
+It does four core things:
 
-- **Remote MCP Transport**: Streamable HTTP endpoint with optional legacy SSE compatibility
-- **Moodle Login Bootstrap**: Users can start from Moodle's normal login or SSO flow and receive revocable connector credentials
-- **Dynamic Tool Discovery**: Automatically harvests Moodle external functions and projects them as MCP tools
-- **Permission-gated Discovery**: Tool visibility is filtered by service scope, connector policy, and user permissions
-- **Workflow Metadata**: Adds curated surface, workflow, provenance, and risk hints on top of harvested Moodle APIs
-- **Well-tested**: Comprehensive PHPUnit test coverage
-- **Wrapper Support**: Adds plugin-owned tools for high-value Moodle UI actions that do not have stable externals
+- boots users into MCP through Moodle's own login and SSO flow
+- serves remote MCP traffic over Streamable HTTP, with optional legacy SSE compatibility
+- harvests Moodle's registered external functions into a permission-gated tool catalog
+- fills selected UI-only gaps with plugin-owned wrappers, currently focused on course authoring
 
-## What is MCP?
+This repository targets Moodle `4.2` through `4.5` and treats the Moodle source tree as the authority for compatibility and behavior.
 
-The **Model Context Protocol (MCP)** is an open protocol that standardizes how applications provide context to AI assistants and Large Language Models (LLMs). It allows AI assistants to:
+## What you get
 
-- Discover available tools and their capabilities
-- Invoke tools with proper parameters
-- Receive structured responses
+- Moodle-native browser bootstrap at `/webservice/mcp/launch.php`
+- primary MCP transport at `/webservice/mcp/server.php`
+- optional SSE compatibility transport at `/webservice/mcp/sse.php`
+- site-wide harvested catalog of `external_functions`
+- grouped, paginated discovery with coverage metadata
+- `x-moodle` metadata on tools for provenance, mutability, risk, eligibility, surface, workflow, and execution hints
+- per-user discovery filtered by service scope, connector policy, and Moodle capability checks
+- call-time authorization rechecks during execution
+- audit ids on discovery and tool execution responses
+- course authoring wrappers for high-value actions that do not have stable external functions
 
-This plugin bridges Moodle's web services with the MCP protocol, enabling AI assistants to interact with your Moodle instance in a standardized way.
+## Current surface
 
-## Requirements
+The connector is harvest-first.
 
-- **Moodle**: 4.2 or higher
-- **PHP**: 8.0 or higher
-- **Moodle Web Services**: Must be enabled
+Anything registered in Moodle's external service system can be surfaced automatically once it belongs to the connector service. On top of that, discovery adds curated grouping and workflow metadata for:
+
+- learning surfaces such as courses, completion, files, messaging, notes, and profile data
+- activity workflows such as assignment, forum, quiz, workshop, feedback, chat, glossary, wiki, data, choice, survey, SCORM, H5P activity, BigBlueButton, and LTI
+- operator surfaces such as users, enrolments, groups, cohorts, roles, courses, categories, competencies, privacy, badges, question bank, and gradebook
+
+Current plugin-owned wrappers are centered on course editing:
+
+- `wrapper_course_add_section_after`
+- `wrapper_course_set_section_visibility`
+- `wrapper_course_delete_sections`
+- `wrapper_course_create_missing_sections`
+- `wrapper_course_move_module`
+- `wrapper_course_move_section_after`
+- `wrapper_course_set_module_visibility`
+- `wrapper_course_duplicate_modules`
+- `wrapper_course_delete_modules`
 
 ## Installation
 
-### Method 1: Via Moodle Plugin Directory (Recommended)
+Install the plugin into Moodle as:
 
-1. Visit **Site administration → Plugins → Install plugins**
-2. Search for "MCP Web Service"
-3. Click **Install** and follow the on-screen instructions
-
-### Method 2: Manual Installation
-
-1. Download the plugin or clone from repository:
-   ```bash
-   cd /path/to/moodle/webservice
-   git clone https://github.com/onbirdev/moodle-webservice_mcp.git mcp
-   ```
-
-2. Visit **Site administration → Notifications** to complete the installation
-
-3. The plugin will be installed as `webservice_mcp`
-
-## Configuration
-
-### 1. Enable Web Services
-
-1. Go to **Site administration → Advanced features**
-2. Enable **Enable web services**
-3. Save changes
-
-### 2. Enable MCP Protocol
-
-1. Go to **Site administration → Plugins → Web services → Manage protocols**
-2. Enable **Model Context Protocol (MCP)**
-
-### 3. Grant Connector Access
-
-Ensure users who should use the connector have the `webservice/mcp:use` capability. The plugin's bootstrap path provisions and syncs its own Moodle external service automatically on first use, including the allowed-user service binding.
-
-### 4. Start the Browser Bootstrap Flow
-
-Recommended flow:
-
-1. Send the user to `/webservice/mcp/launch.php?format=json`
-2. If the Moodle site uses OAuth2 or SSO, the user follows Moodle's normal Moodle-managed login path
-3. If the user already has a valid Moodle session, the bootstrap can complete without another credential prompt
-4. The endpoint returns a short-lived connector credential payload for the MCP transport
-
-### 5. Optional Manual Service and Token Mode
-
-The server still accepts raw Moodle web service tokens if you want to use classic Moodle service/token administration instead of the connector bootstrap.
-
-1. Go to **Site administration → Server → Web services → External services**
-2. Click **Add** to create a new service
-3. Configure the service:
-   - **Name**: e.g., "MCP Service"
-   - **Short name**: e.g., "mcp_service"
-   - **Enabled**: Yes
-   - **Authorized users only**: Yes (recommended)
-4. Add the external functions your service should expose
-
-### 6. Create a Token
-
-1. Go to **Site administration → Server → Web services → Manage tokens**
-2. Click **Add** to create a new token
-3. Select:
-   - **User**: The user this token will authenticate as
-   - **Service**: The service you created above
-4. Save and copy the generated token
-
-## Usage
-
-#### Recommended Bootstrap Endpoint
-
-```
-https://your-moodle-site.com/webservice/mcp/launch.php?format=json
+```bash
+cd /path/to/moodle/webservice
+git clone https://github.com/ali205412/moodle-mcp.git mcp
 ```
 
-#### MCP Transport Endpoints
+Then visit `Site administration -> Notifications` to complete the upgrade.
 
-Primary Streamable HTTP transport:
+The Moodle component name is `webservice_mcp`.
 
-```
-https://your-moodle-site.com/webservice/mcp/server.php
+## Required Moodle setup
+
+### 1. Enable web services
+
+In Moodle:
+
+1. go to `Site administration -> Advanced features`
+2. enable `Enable web services`
+
+### 2. Enable the MCP protocol
+
+In Moodle:
+
+1. go to `Site administration -> Plugins -> Web services -> Manage protocols`
+2. enable `Model Context Protocol (MCP)`
+
+### 3. Grant connector capabilities
+
+The connector bootstrap requires:
+
+- `webservice/mcp:use`
+
+Optional management capability:
+
+- `webservice/mcp:manageconnectors`
+
+By default this is a site policy decision. The plugin does not assume every authenticated user should receive connector access automatically.
+
+### 4. Configure plugin settings
+
+Available settings:
+
+- `connectorserviceidentifier`
+  This is the shortname used for the plugin-owned Moodle external service.
+- `allowdurablegrants`
+  Allows explicit longer-lived connector grants in addition to the default short-lived bootstrap credentials.
+- `allowedorigins`
+  Browser-facing origin allowlist for remote transport endpoints.
+- `enablelegacysse`
+  Enables the SSE compatibility endpoint.
+- `transportsessionttl`
+  TTL for MCP transport sessions.
+- `replayttl`
+  TTL for replay/event buffers.
+- `showhighrisktools`
+  Controls whether high-risk tools are shown in discovery.
+
+## Authentication model
+
+### Recommended flow
+
+Use Moodle's browser login flow first, then use the returned connector credential against MCP.
+
+1. send the user to:
+
+```text
+/webservice/mcp/launch.php?format=json
 ```
 
-Legacy SSE compatibility transport when enabled:
+2. Moodle handles login normally
+   Existing sessions work, and OAuth2/SSO sites keep using Moodle's own auth path.
+3. the plugin provisions or syncs its owned external service and grants the current user access to it
+4. the endpoint returns a short-lived connector credential payload
+5. the MCP client uses that credential against the MCP transport endpoint
 
-```
-https://your-moodle-site.com/webservice/mcp/sse.php
+### Legacy/manual mode
+
+The transport still accepts raw Moodle web service tokens. That is useful for compatibility or controlled service-account style integrations, but it is no longer the recommended connector path.
+
+## Endpoints
+
+### Browser bootstrap
+
+```text
+https://your-moodle-site.example/webservice/mcp/launch.php?format=json
 ```
 
-The MCP transport can be authenticated in two ways.
+### Primary MCP transport
 
-**1. Using query parameter (wstoken):**
-```
-https://your-moodle-site.com/webservice/mcp/server.php?wstoken=YOUR_TOKEN
-```
-
-**2. Using Authorization header (Bearer token):**
-```
-https://your-moodle-site.com/webservice/mcp/server.php
+```text
+https://your-moodle-site.example/webservice/mcp/server.php
 ```
 
-Add the token to the request header:
+### Legacy SSE compatibility transport
+
+```text
+https://your-moodle-site.example/webservice/mcp/sse.php
 ```
+
+### Supported auth styles
+
+Bearer header:
+
+```text
 Authorization: Bearer YOUR_TOKEN
 ```
 
-Replace:
-- `your-moodle-site.com` with your Moodle domain
-- `YOUR_TOKEN` with either the connector credential returned by `launch.php` or a raw Moodle web service token
+Query parameter:
 
-
-#### Monitoring
-
-Monitor MCP web service usage through:
-- Standard Moodle logs at **Site administration → Reports → Logs**
-
-
-### Client Examples
-
-#### 1. Initialize Session
-
-**Request:**
-```json
-{
-   "jsonrpc": "2.0",
-   "method": "initialize",
-   "params": {},
-   "id": 1
-}
+```text
+?wstoken=YOUR_TOKEN
 ```
 
-**Response:**
-```json
-{
-   "jsonrpc": "2.0",
-   "result": {
-      "protocolVersion": "1.0",
-      "serverInfo": {
-         "name": "Moodle MCP Server",
-         "version": "0.1.0"
-      },
-      "capabilities": {
-         "tools": {}
-      }
-   },
-   "id": 1
-}
-```
+`YOUR_TOKEN` can be either:
 
-#### 2. List Available Tools
+- a connector credential returned by `launch.php`
+- a raw Moodle web service token
 
-**Request:**
-```json
-{
-   "jsonrpc": "2.0",
-   "method": "tools/list",
-   "params": {},
-   "id": 2
-}
-```
+## Minimal examples
 
-**Response:**
-```json
-{
-   "jsonrpc": "2.0",
-   "result": {
-      "tools": [
-         {
-            "name": "core_user_get_users",
-            "description": "Search for users matching the criteria",
-            "inputSchema": {
-               "type": "object",
-               "properties": {
-                  "criteria": {
-                     "type": "array",
-                     "items": {
-                        "type": "object",
-                        "properties": {
-                           "key": {
-                              "type": "string"
-                           },
-                           "value": {
-                              "type": "string"
-                           }
-                        }
-                     }
-                  }
-               }
-            },
-            "outputSchema": {
-               "type": "object",
-               "properties": {
-                  "result": {
-                     "type": "object"
-                  }
-               }
-            }
-         }
-      ]
-   },
-   "id": 2
-}
-```
-
-#### 3. Call a Tool
-
-**Request:**
-```json
-{
-   "jsonrpc": "2.0",
-   "method": "tools/call",
-   "params": {
-      "name": "core_user_get_users",
-      "arguments": {
-         "criteria": [
-            {
-               "key": "email",
-               "value": "student@example.com"
-            }
-         ]
-      }
-   },
-   "id": 3
-}
-```
-
-**Response:**
-```json
-{
-   "jsonrpc": "2.0",
-   "result": {
-      "content": [
-         {
-            "type": "text",
-            "text": "{\"result\":{\"users\":[{\"id\":2,\"username\":\"student\",\"firstname\":\"Student\",\"lastname\":\"User\",\"email\":\"student@example.com\"}]}}"
-         }
-      ],
-      "structuredContent": {
-         "result": {
-            "users": [
-               {
-                  "id": 2,
-                  "username": "student",
-                  "firstname": "Student",
-                  "lastname": "User",
-                  "email": "student@example.com"
-               }
-            ]
-         }
-      }
-   },
-   "id": 3
-}
-```
-
-#### Using cURL
+### Bootstrap
 
 ```bash
-curl -X POST "https://your-moodle-site.com/webservice/mcp/server.php?wstoken=YOUR_TOKEN" \
+curl "https://your-moodle-site.example/webservice/mcp/launch.php?format=json" \
+  -H "Accept: application/json"
+```
+
+### List tools
+
+```bash
+curl "https://your-moodle-site.example/webservice/mcp/server.php" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/list" \
+  -H "Mcp-Protocol-Version: 2025-03-26" \
   -d '{
     "jsonrpc": "2.0",
     "method": "tools/list",
-    "params": {},
-    "id": 1
-  }'
-```
-
-```bash
-curl -X POST "https://your-moodle-site.com/webservice/mcp/server.php" \
-  -H 'Authorization: Bearer YOUR_TOKEN' \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "tools/list",
-    "params": {},
-    "id": 1
-  }'
-```
-
-
-## API Reference
-
-### Supported MCP Methods
-
-| Method | Description | Parameters |
-|--------|-------------|------------|
-| `initialize` | Initialize MCP session | None |
-| `tools/list` | List available tools | None |
-| `tools/call` | Invoke a specific tool | `name` (string), `arguments` (object) |
-
-
-### Error Responses
-
-Errors follow JSON-RPC 2.0 format:
-
-```json
-{
-    "jsonrpc": "2.0",
-    "error": {
-        "code": -32600,
-        "message": "Invalid Request",
-        "data": "Missing method"
+    "params": {
+      "limit": 50
     },
-    "id": null
-}
+    "id": 1
+  }'
 ```
 
-**Common Error Codes:**
-- `-32700`: Parse error (invalid JSON)
-- `-32600`: Invalid request (missing required fields)
-- `-32601`: Method not found
-- `-32602`: Invalid params
-- `-32603`: Internal error
+### Call a tool
 
-## Architecture
-
-### Components
-
-```
-webservice_mcp/
-├── classes/
-│   ├── local/
-│   │   ├── server.php          # MCP server implementation
-│   │   ├── request.php         # Request parser and validator
-│   │   └── tool_provider.php   # Tool discovery and schema generation
-│   └── privacy/
-│       └── provider.php        # Privacy API implementation
-├── db/
-│   └── access.php              # Capability definitions
-├── lang/
-│   └── en/
-│       └── webservice_mcp.php  # Language strings
-├── tests/
-│   ├── server_test.php         # Server tests
-│   ├── client_test.php         # Client tests
-│   ├── request_test.php        # Request parser tests
-│   └── tool_provider_test.php  # Tool provider tests
-├── lib.php                     # Client class
-├── locallib.php                # Local library functions
-├── server.php                  # Server endpoint
-└── version.php                 # Plugin metadata
+```bash
+curl "https://your-moodle-site.example/webservice/mcp/server.php" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Mcp-Method: tools/call" \
+  -H "Mcp-Protocol-Version: 2025-03-26" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "core_webservice_get_site_info",
+      "arguments": {}
+    },
+    "id": 2
+  }'
 ```
 
-### Data Flow
+## Discovery model
 
-1. **Client Request** → JSON-RPC 2.0 POST to `server.php`
-2. **Authentication** → Token validation via Moodle's web service API
-3. **Request Parsing** → `request` class validates JSON-RPC format
-4. **Method Routing** → `server` class routes to appropriate handler
-5. **Tool Discovery** → `tool_provider` queries available external functions
-6. **Schema Generation** → Converts Moodle descriptions to JSON Schema
-7. **Tool Execution** → Calls Moodle's external function API
-8. **Response** → JSON-RPC 2.0 formatted response
+Discovery is not a flat dump of Moodle functions.
 
-### Key Classes
+The plugin builds a cached harvested catalog from Moodle's external service registry and projects it into MCP tool definitions. Discovery responses include:
 
-- **`server`**: Main server implementation extending `webservice_base_server`
-- **`request`**: Parses and validates JSON-RPC 2.0 requests
-- **`tool_provider`**: Discovers available tools and generates JSON Schemas
-- **`webservice_mcp_client`**: Client for making MCP requests
+- `tools`
+- `nextCursor`
+- `groups`
+- `coverage`
+- `catalogVersion`
+
+Each tool can include `x-moodle` metadata such as:
+
+- `component`
+- `domain`
+- `mutability`
+- `capabilities`
+- `provenance`
+- `transport`
+- `eligibility`
+- `risk`
+- `surface`
+- `workflow`
+- `execution`
+- `services`
+
+That metadata exists so clients can do better than naive tool prompting. It enables better routing, safer confirmations, and clearer UX for high-risk or long-running operations.
+
+## Security model
+
+The connector is designed so that Moodle remains the authority.
+
+- the plugin-owned connector service is synced from Moodle's `external_functions` table
+- the connector service is restricted to explicitly allowed users
+- bootstrap only works for users with `webservice/mcp:use`
+- discovery is filtered before tools are shown
+- execution re-checks context and capability at call time
+- high-risk and destructive operations carry structured risk metadata
+- transport sessions are isolated per user, context, and service
+- session locks are released after auth so long-lived connector traffic does not block normal Moodle browsing
 
 ## Testing
 
-### Local Docker Test Runner
+### Local Docker runner
 
-This repository now includes a Docker Compose-based test runner that mirrors the `moodle-plugin-ci` flow used in GitHub Actions.
+The repository includes a Docker-based runner that mirrors the `moodle-plugin-ci` path used in GitHub Actions.
+
+MariaDB:
 
 ```bash
-# Fast local check against the oldest supported branch on MariaDB.
 bash scripts/run-local-tests.sh
+```
 
-# Run the same flow against PostgreSQL.
+PostgreSQL:
+
+```bash
 bash scripts/run-local-tests.sh pgsql
+```
 
-# Override the Moodle branch or enabled test steps.
+Branch override:
+
+```bash
 MOODLE_BRANCH=MOODLE_405_STABLE bash scripts/run-local-tests.sh
+```
+
+Custom steps:
+
+```bash
 TEST_STEPS="phplint validate savepoints phpunit phpcs" bash scripts/run-local-tests.sh
 ```
 
-The Docker runner defaults to:
-- `MOODLE_BRANCH=MOODLE_402_STABLE`
-- `TEST_STEPS="phplint validate savepoints phpunit"`
-- `POSTGRES_IMAGE=postgres:16-alpine`
-
-You can also override the local database images explicitly when Docker Hub rate limits or local caches require it:
+Image override:
 
 ```bash
 MARIADB_IMAGE=mariadb:12.3-ubi10-rc bash scripts/run-local-tests.sh
 POSTGRES_IMAGE=postgres:16-alpine bash scripts/run-local-tests.sh pgsql
 ```
 
-It uses `docker-compose.test.yml`, `docker/plugin-ci/Dockerfile`, and `docker/plugin-ci/run-tests.sh`.
+### Installed Moodle test site
 
-### Installed Moodle PHPUnit
+If the plugin is mounted inside an installed Moodle test site, use that site's normal PHPUnit and plugin test workflow instead of the Docker runner.
 
-If you already have the plugin mounted inside an installed Moodle dirroot with PHPUnit configured, you can still use Moodle's standard PHPUnit command:
+## GitHub automation
+
+### CI
+
+GitHub Actions runs:
+
+- a PHPUnit matrix across `MOODLE_402_STABLE` to `MOODLE_405_STABLE`
+- both `mariadb` and `pgsql`
+- a `Quality (MOODLE_405_STABLE)` lane for static quality checks
+- a final `Branch Gate` job used by branch protection
+
+### Delivery
+
+Pushes to `dev` and `main` build a packaged plugin ZIP and upload it as a workflow artifact.
+
+### Release
+
+Successful CI on `main` auto-creates the matching `v<release>` tag when it does not already exist. That tag triggers the release workflow, which publishes the packaged ZIP as a GitHub Release asset.
+
+Local packaging command:
 
 ```bash
-# Run all plugin tests
-vendor/bin/phpunit --testsuite webservice_mcp_testsuite
-```
-
-### GitHub Actions CI
-
-`.github/workflows/ci.yml` now runs:
-- a PHPUnit matrix across `MOODLE_402_STABLE`, `MOODLE_403_STABLE`, `MOODLE_404_STABLE`, and `MOODLE_405_STABLE`
-- both `mariadb` and `pgsql` for the PHPUnit matrix
-- a separate quality job on `MOODLE_405_STABLE` for `phpmd`, `phpcs`, `phpdoc`, `mustache`, and `grunt`
-
-### Release Packaging
-
-The release workflow is tag-driven and builds a real Moodle plugin ZIP instead of relying on GitHub's generic source archive.
-
-Successful CI on `main` now auto-creates the matching `v<release>` tag when that tag does not already exist. The tag push then triggers the release workflow, which publishes the packaged ZIP as a GitHub Release asset.
-
-```bash
-# Build the packaged release artifact locally.
 bash scripts/package-release.sh
 ```
 
-This creates `dist/webservice_mcp-<release>.zip` with the correct Moodle plugin directory name `mcp/`.
+The release ZIP is packaged with the Moodle plugin directory name `mcp/`.
 
-### Test Coverage
+## Repository workflow
 
-The plugin includes comprehensive tests for:
-- ✅ JSON-RPC 2.0 request parsing and validation
-- ✅ MCP protocol methods (initialize, tools/list, tools/call)
-- ✅ Tool discovery and schema generation
-- ✅ Client class functionality
-- ✅ Error handling and edge cases
+Current branch model:
 
-## Troubleshooting
+- `dev` for active integration
+- `main` as the protected release branch
 
-### Common Issues
+Current protections:
 
-#### 1. "Web services are not enabled"
-**Solution**: Enable web services in **Site administration → Advanced features**
+- `dev` requires `Branch Gate`
+- `main` requires `Branch Gate`
+- `main` also requires PR review
+- merged branches are auto-deleted
 
-#### 2. "Invalid token"
-**Solution**: 
-- Verify the token is correct
-- Check the token hasn't expired
-- Ensure the service is enabled
-- Confirm the user has appropriate capabilities
+## Repository layout
 
-#### 3. "Method not found"
-**Solution**: Check that the method name is correct:
-- `initialize`
-- `tools/list`
-- `tools/call`
-
-#### 4. "Missing tool name"
-**Solution**: When using `tools/call`, ensure you provide the `name` parameter:
-```json
-{
-    "method": "tools/call",
-    "params": {
-        "name": "core_user_get_users",
-        "arguments": {}
-    }
-}
+```text
+webservice/mcp/
+├── classes/local/auth/         browser bootstrap, credentials, identity
+├── classes/local/catalog/      harvest, schemas, workflow descriptors, coverage
+├── classes/local/discovery/    eligibility and risk analysis
+├── classes/local/stream/       replay and transport session persistence
+├── classes/local/transport/    Streamable HTTP and SSE compatibility
+├── classes/local/wrapper/      plugin-owned wrapper framework
+├── db/                         capabilities, caches, install/upgrade
+├── docker/                     local CI runner image and scripts
+├── scripts/                    local test and release packaging helpers
+├── tests/                      PHPUnit coverage
+├── launch.php                  browser bootstrap endpoint
+├── server.php                  primary transport entrypoint
+└── sse.php                     SSE compatibility entrypoint
 ```
 
-#### 5. Empty tools list
-**Solution**:
-- Check that your service has functions added
-- Verify the token is associated with the correct service
-- Ensure functions aren't deprecated
+## Practical notes
 
-### Logging
-
-MCP requests are logged in Moodle's standard web service logs:
-- **Site administration → Reports → Logs**
-- Filter by "Web service" component
-
-Connector discovery and tool execution also emit plugin-local audit ids that are stored in the `webservice_mcp_audit` table.
-
-
-## 💖 Support the development of this plugin
-
-Keep it updated and free for everyone!
-
-[☕ Buy Me a Coffee (Ko-fi)](https://ko-fi.com/onbirdev) | [💸 Support via PayPal](https://www.paypal.me/onbirdev)
+- the connector is strongest when the target action already exists as a Moodle external function
+- the wrapper framework exists so UI-only gaps can be added without abandoning the plugin-first model
+- current wrapper implementation is intentionally concentrated on course authoring, where the upstream external surface is weakest for MCP-style operator workflows
+- if you change supported Moodle behavior, verify it against the relevant Moodle source branch, not memory
