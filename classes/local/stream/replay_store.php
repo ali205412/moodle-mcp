@@ -92,7 +92,7 @@ class replay_store {
     /**
      * Load the stored replay payload, applying manual expiry.
      *
-     * @param string $sessionid Session id.
+     * @param string $cachekey Replay cache key.
      * @return array
      */
     private function payload(string $cachekey): array {
