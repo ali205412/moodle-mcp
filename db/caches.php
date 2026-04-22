@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Capability definitions for the MCP web service plugin.
+ * Cache definitions for transport/session state.
  *
  * @package     webservice_mcp
  * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
@@ -24,21 +24,27 @@
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
+declare(strict_types=1);
+
 defined('MOODLE_INTERNAL') || die();
 
-$capabilities = [
-    'webservice/mcp:use' => [
-        'captype' => 'read',
-        'contextlevel' => CONTEXT_SYSTEM,
-        'archetypes' => [
-            'manager' => CAP_ALLOW,
-        ],
+$definitions = [
+    'mcp_stream_session' => [
+        'mode' => cache_store::MODE_APPLICATION,
+        'simplekeys' => true,
+        'simpledata' => false,
+        'ttl' => 0,
     ],
-    'webservice/mcp:manageconnectors' => [
-        'captype' => 'write',
-        'contextlevel' => CONTEXT_SYSTEM,
-        'archetypes' => [
-            'manager' => CAP_ALLOW,
-        ],
+    'mcp_event_replay' => [
+        'mode' => cache_store::MODE_APPLICATION,
+        'simplekeys' => true,
+        'simpledata' => false,
+        'ttl' => 0,
+    ],
+    'mcp_catalog_snapshot' => [
+        'mode' => cache_store::MODE_APPLICATION,
+        'simplekeys' => true,
+        'simpledata' => false,
+        'ttl' => 0,
     ],
 ];

@@ -1,0 +1,44 @@
+name: Moodle Plugin Delivery
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+concurrency:
+  group: delivery-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: none
+
+      - name: Build package
+        id: package
+        run: |
+          PACKAGE_PATH="$(bash scripts/package-release.sh)"
+          echo "package=${PACKAGE_PATH}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webservice_mcp-${{ github.ref_name }}
+          path: ${{ steps.package.outputs.package }}
+
+      - name: Summarize delivery artifact
+        run: |
+          echo "Built package for ${GITHUB_REF_NAME}: ${{ steps.package.outputs.package }}" >> "${GITHUB_STEP_SUMMARY}"

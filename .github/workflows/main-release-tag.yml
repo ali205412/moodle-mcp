@@ -1,0 +1,84 @@
+name: Moodle Main Release Tag
+
+on:
+  workflow_run:
+    workflows:
+      - Moodle Plugin CI
+    types:
+      - completed
+
+permissions:
+  contents: write
+
+concurrency:
+  group: main-release-tag-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  tag-release:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main commit that passed CI
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Skip stale workflow runs
+        id: freshness
+        env:
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          CURRENT_MAIN_SHA="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [ "${CURRENT_MAIN_SHA}" != "${RUN_SHA}" ]; then
+            echo "stale=true" >> "${GITHUB_OUTPUT}"
+            echo "Skipping stale workflow_run for ${RUN_SHA}; main is now ${CURRENT_MAIN_SHA}."
+          else
+            echo "stale=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Resolve release metadata
+        id: meta
+        if: ${{ steps.freshness.outputs.stale != 'true' }}
+        run: |
+          VERSION="$(
+            sed -n "s/^\$plugin->release = '\(.*\)';/\1/p" version.php | head -n1
+          )"
+          if [ -z "${VERSION}" ]; then
+            VERSION="$(
+              sed -n "s/^\$plugin->version = \([0-9][0-9]*\);/\1/p" version.php | head -n1
+            )"
+          fi
+          if [ -z "${VERSION}" ]; then
+            echo "Could not determine plugin version from version.php" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create release tag if missing
+        if: ${{ steps.freshness.outputs.stale != 'true' }}
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag ${TAG} already exists; nothing to do."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${TAG}"
+          git push origin "${TAG}"
+
+      - name: Summarize tag result
+        if: ${{ steps.freshness.outputs.stale != 'true' }}
+        run: |
+          echo "Ensured release tag \`${{ steps.meta.outputs.tag }}\` exists for main commit \`${{ github.event.workflow_run.head_sha }}\`." >> "${GITHUB_STEP_SUMMARY}"

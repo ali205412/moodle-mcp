@@ -14,8 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+declare(strict_types=1);
+
+namespace webservice_mcp\local\auth;
+
 /**
- * Capability definitions for the MCP web service plugin.
+ * Edge-only companion seam for Phase 1.
+ *
+ * This contract may describe transport-facing bootstrap exchange or remote
+ * connector handoff metadata, but it is explicitly NOT the authority for
+ * Moodle permissions, tool discovery, or tool execution.
  *
  * @package     webservice_mcp
  * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
@@ -23,22 +31,20 @@
  * @link        https://onbir.dev
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
+interface companion_contract {
+    /**
+     * Build transport-facing metadata for a connector credential exchange.
+     *
+     * @param array $payload Plugin-generated bootstrap payload.
+     * @return array
+     */
+    public function build_exchange_payload(array $payload): array;
 
-defined('MOODLE_INTERNAL') || die();
-
-$capabilities = [
-    'webservice/mcp:use' => [
-        'captype' => 'read',
-        'contextlevel' => CONTEXT_SYSTEM,
-        'archetypes' => [
-            'manager' => CAP_ALLOW,
-        ],
-    ],
-    'webservice/mcp:manageconnectors' => [
-        'captype' => 'write',
-        'contextlevel' => CONTEXT_SYSTEM,
-        'archetypes' => [
-            'manager' => CAP_ALLOW,
-        ],
-    ],
-];
+    /**
+     * Build transport-facing metadata for a known connector session.
+     *
+     * @param string $credentialtoken Connector token.
+     * @return array
+     */
+    public function describe_session(string $credentialtoken): array;
+}
