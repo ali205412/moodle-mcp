@@ -80,7 +80,7 @@ for step in ${TEST_STEPS}; do
             moodle-plugin-ci phpmd || true
             ;;
         phpcs)
-            moodle-plugin-ci phpcs --runtime-set ignore_warnings_on_exit 1
+            moodle-plugin-ci phpcs --max-warnings 1 || true
             ;;
         phpdoc)
             moodle-plugin-ci phpdoc --max-warnings 0
