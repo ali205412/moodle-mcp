@@ -7,7 +7,7 @@ It does four core things:
 - boots users into MCP through Moodle's own login and SSO flow
 - serves remote MCP traffic over Streamable HTTP, with optional legacy SSE compatibility
 - harvests Moodle's registered external functions into a permission-gated tool catalog
-- fills selected UI-only gaps with plugin-owned wrappers, currently focused on course authoring
+- fills selected UI-only gaps with plugin-owned wrappers across course authoring, question bank, gradebook, and badges
 
 This repository targets Moodle `4.2` through `4.5` and treats the Moodle source tree as the authority for compatibility and behavior.
 
@@ -22,7 +22,11 @@ This repository targets Moodle `4.2` through `4.5` and treats the Moodle source 
 - per-user discovery filtered by service scope, connector policy, and Moodle capability checks
 - call-time authorization rechecks during execution
 - audit ids on discovery and tool execution responses
-- course authoring wrappers for high-value actions that do not have stable external functions
+- typed parity wrappers for high-value UI-only actions in:
+  - course authoring
+  - question bank
+  - gradebook setup
+  - badge administration
 
 ## Current surface
 
@@ -34,17 +38,32 @@ Anything registered in Moodle's external service system can be surfaced automati
 - activity workflows such as assignment, forum, quiz, workshop, feedback, chat, glossary, wiki, data, choice, survey, SCORM, H5P activity, BigBlueButton, and LTI
 - operator surfaces such as users, enrolments, groups, cohorts, roles, courses, categories, competencies, privacy, badges, question bank, and gradebook
 
-Current plugin-owned wrappers are centered on course editing:
+Current plugin-owned wrappers now cover four parity domains:
 
-- `wrapper_course_add_section_after`
-- `wrapper_course_set_section_visibility`
-- `wrapper_course_delete_sections`
-- `wrapper_course_create_missing_sections`
-- `wrapper_course_move_module`
-- `wrapper_course_move_section_after`
-- `wrapper_course_set_module_visibility`
-- `wrapper_course_duplicate_modules`
-- `wrapper_course_delete_modules`
+- course editing:
+  - `wrapper_course_add_section_after`
+  - `wrapper_course_set_section_visibility`
+  - `wrapper_course_delete_sections`
+  - `wrapper_course_create_missing_sections`
+  - `wrapper_course_move_module`
+  - `wrapper_course_move_section_after`
+  - `wrapper_course_set_module_visibility`
+  - `wrapper_course_duplicate_modules`
+  - `wrapper_course_delete_modules`
+- question bank:
+  - category create/update/delete
+  - question create/update for supported qtypes
+  - question move/delete
+  - native preview URLs
+  - GIFT/XML import
+- gradebook:
+  - manual item create/update/move/delete
+  - category update/move/delete
+- badges:
+  - badge create/update/message/delete/duplicate
+  - related badges
+  - alignments
+  - manual award/revoke
 
 ## Installation
 

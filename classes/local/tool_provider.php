@@ -271,9 +271,18 @@ class tool_provider {
      */
     private static function project_wrapper_tool(array $definition): array {
         $workflow = (new wrapper_registry())->for_tool($definition['name']);
+        $surface = self::wrapper_surface_metadata($definition);
         $destructive = in_array($definition['name'], [
             'wrapper_course_delete_sections',
             'wrapper_course_delete_modules',
+            'wrapper_question_delete_category',
+            'wrapper_question_delete_questions',
+            'wrapper_gradebook_delete_items',
+            'wrapper_gradebook_delete_categories',
+            'wrapper_badge_delete_badges',
+            'wrapper_badge_delete_related_badges',
+            'wrapper_badge_delete_alignments',
+            'wrapper_badge_revoke_badge',
         ], true);
 
         return [
@@ -288,7 +297,7 @@ class tool_provider {
             ],
             'annotations' => [
                 'readOnlyHint' => false,
-                'destructiveHint' => false,
+                'destructiveHint' => $destructive,
                 'idempotentHint' => false,
                 'openWorldHint' => false,
             ],
@@ -321,7 +330,7 @@ class tool_provider {
                     'confirmationRequired' => true,
                     'signals' => array_values(array_filter([
                         'wrapper',
-                        'course_authoring',
+                        $surface['area'],
                         $destructive ? 'destructive_operation' : null,
                     ])),
                     'destructive' => $destructive,
@@ -330,7 +339,7 @@ class tool_provider {
                         $definition['requiredCapabilities']
                     ),
                 ],
-                'surface' => ['surface' => 'operator', 'area' => 'authoring'],
+                'surface' => $surface,
                 'workflow' => $workflow,
                 'execution' => [
                     'mode' => 'sync',
@@ -344,6 +353,23 @@ class tool_provider {
                 'services' => [],
             ],
         ];
+    }
+
+    /**
+     * Project wrapper-specific surface metadata.
+     *
+     * @param array $definition Wrapper definition.
+     * @return array
+     */
+    private static function wrapper_surface_metadata(array $definition): array {
+        $name = (string)($definition['name'] ?? '');
+
+        return match (true) {
+            str_starts_with($name, 'wrapper_question_') => ['surface' => 'operator', 'area' => 'question_bank'],
+            str_starts_with($name, 'wrapper_gradebook_') => ['surface' => 'operator', 'area' => 'gradebook'],
+            str_starts_with($name, 'wrapper_badge_') => ['surface' => 'operator', 'area' => 'badges'],
+            default => ['surface' => 'operator', 'area' => 'authoring'],
+        };
     }
 
     /**
