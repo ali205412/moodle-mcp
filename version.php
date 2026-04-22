@@ -26,8 +26,8 @@
 
 defined('MOODLE_INTERNAL') || die();
 
-$plugin->version = 2026042104;
+$plugin->version = 2026042200;
 $plugin->requires = 2023041800;
 $plugin->component = 'webservice_mcp';
 $plugin->maturity = MATURITY_BETA;
-$plugin->release = '0.6.0';
+$plugin->release = '0.7.0';
