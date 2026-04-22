@@ -109,5 +109,84 @@ function xmldb_webservice_mcp_upgrade(int $oldversion): bool {
         upgrade_plugin_savepoint(true, 2026042104, 'webservice', 'mcp');
     }
 
+    if ($oldversion < 2026042201) {
+        $table = new xmldb_table('webservice_mcp_credential');
+
+        $field = new xmldb_field('scope', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'iprestriction');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        $field = new xmldb_field('resourceuri', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'scope');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        $field = new xmldb_field('oauthclientid', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'resourceuri');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        $index = new xmldb_index('oauthclientid_idx', XMLDB_INDEX_NOTUNIQUE, ['oauthclientid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        $table = new xmldb_table('webservice_mcp_oauth_client');
+        if (!$dbman->table_exists($table)) {
+            $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+            $table->add_field('timecreated', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('timemodified', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('clientid', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('clientsecret', XMLDB_TYPE_CHAR, '255', null, null, null, null);
+            $table->add_field('clientname', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('redirecturis', XMLDB_TYPE_TEXT, null, null, XMLDB_NOTNULL, null, null);
+            $table->add_field('scope', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('granttypes', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('responsetypes', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('tokenauthmethod', XMLDB_TYPE_CHAR, '32', null, XMLDB_NOTNULL, null, 'none');
+            $table->add_field('isdynamic', XMLDB_TYPE_INTEGER, '1', null, XMLDB_NOTNULL, null, '1');
+            $table->add_field('revoked', XMLDB_TYPE_INTEGER, '1', null, XMLDB_NOTNULL, null, '0');
+
+            $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+            $table->add_key('uniq_clientid', XMLDB_KEY_UNIQUE, ['clientid']);
+
+            $table->add_index('revoked_idx', XMLDB_INDEX_NOTUNIQUE, ['revoked']);
+
+            $dbman->create_table($table);
+        }
+
+        $table = new xmldb_table('webservice_mcp_oauth_code');
+        if (!$dbman->table_exists($table)) {
+            $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+            $table->add_field('timecreated', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('timemodified', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('expiresat', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('userid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('clientid', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('code', XMLDB_TYPE_CHAR, '128', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('redirecturi', XMLDB_TYPE_TEXT, null, null, XMLDB_NOTNULL, null, null);
+            $table->add_field('scope', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('resourceuri', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('contextid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('serviceidentifier', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('codechallenge', XMLDB_TYPE_CHAR, '128', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('codechallengemethod', XMLDB_TYPE_CHAR, '16', null, XMLDB_NOTNULL, null, 'S256');
+            $table->add_field('used', XMLDB_TYPE_INTEGER, '1', null, XMLDB_NOTNULL, null, '0');
+
+            $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+            $table->add_key('userid_fk', XMLDB_KEY_FOREIGN, ['userid'], 'user', ['id']);
+            $table->add_key('contextid_fk', XMLDB_KEY_FOREIGN, ['contextid'], 'context', ['id']);
+            $table->add_key('uniq_code', XMLDB_KEY_UNIQUE, ['code']);
+
+            $table->add_index('clientid_idx', XMLDB_INDEX_NOTUNIQUE, ['clientid']);
+            $table->add_index('expiresat_idx', XMLDB_INDEX_NOTUNIQUE, ['expiresat']);
+
+            $dbman->create_table($table);
+        }
+
+        upgrade_plugin_savepoint(true, 2026042201, 'webservice', 'mcp');
+    }
+
     return true;
 }

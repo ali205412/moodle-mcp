@@ -64,6 +64,13 @@ if ($hassiteconfig && $settings instanceof admin_settingpage && $ADMIN->fulltree
         0
     ));
 
+    $settings->add(new admin_setting_configcheckbox(
+        'webservice_mcp/oauthenabled',
+        get_string('settings:oauthenabled', 'webservice_mcp'),
+        get_string('settings:oauthenabled_desc', 'webservice_mcp'),
+        1
+    ));
+
     $settings->add(new admin_setting_configduration(
         'webservice_mcp/transportsessionttl',
         get_string('settings:transportsessionttl', 'webservice_mcp'),

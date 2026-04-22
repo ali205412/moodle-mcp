@@ -14,8 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+declare(strict_types=1);
+
+namespace webservice_mcp\local\oauth;
+
 /**
- * MCP web service plugin version information.
+ * OAuth protocol exception carrying an RFC-style error code and HTTP status.
  *
  * @package     webservice_mcp
  * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
@@ -23,11 +27,37 @@
  * @link        https://onbir.dev
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
+final class exception extends \Exception {
+    /**
+     * Constructor.
+     *
+     * @param string $oautherror OAuth error code.
+     * @param int $httpstatus HTTP status code.
+     * @param string $message Human-readable detail.
+     */
+    public function __construct(
+        private string $oautherror,
+        private int $httpstatus,
+        string $message
+    ) {
+        parent::__construct($message);
+    }
 
-defined('MOODLE_INTERNAL') || die();
+    /**
+     * Return the OAuth error code.
+     *
+     * @return string
+     */
+    public function oauth_error(): string {
+        return $this->oautherror;
+    }
 
-$plugin->version = 2026042201;
-$plugin->requires = 2023041800;
-$plugin->component = 'webservice_mcp';
-$plugin->maturity = MATURITY_BETA;
-$plugin->release = '0.7.1';
+    /**
+     * Return the HTTP status code.
+     *
+     * @return int
+     */
+    public function http_status(): int {
+        return $this->httpstatus;
+    }
+}

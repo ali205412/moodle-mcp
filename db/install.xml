@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<XMLDB PATH="webservice/mcp/db" VERSION="2026042104" COMMENT="XMLDB file for Moodle webservice_mcp"
+<XMLDB PATH="webservice/mcp/db" VERSION="2026042201" COMMENT="XMLDB file for Moodle webservice_mcp"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
 >
@@ -19,6 +19,9 @@
         <FIELD NAME="sid" TYPE="char" LENGTH="128" NOTNULL="false" SEQUENCE="false" COMMENT="Linked browser session identifier when bootstrap is session-bound."/>
         <FIELD NAME="validuntil" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="Credential expiry timestamp."/>
         <FIELD NAME="iprestriction" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="Optional IP restriction for credential use."/>
+        <FIELD NAME="scope" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="Granted OAuth scopes when this credential originated from the OAuth server."/>
+        <FIELD NAME="resourceuri" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="Canonical MCP resource URI this credential is bound to."/>
+        <FIELD NAME="oauthclientid" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="OAuth client id that originated this credential, when applicable."/>
         <FIELD NAME="lastaccess" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="Last successful use timestamp."/>
         <FIELD NAME="revoked" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Whether the connector credential has been revoked."/>
       </FIELDS>
@@ -32,6 +35,7 @@
       <INDEXES>
         <INDEX NAME="userid_idx" UNIQUE="false" FIELDS="userid"/>
         <INDEX NAME="sid_idx" UNIQUE="false" FIELDS="sid"/>
+        <INDEX NAME="oauthclientid_idx" UNIQUE="false" FIELDS="oauthclientid"/>
         <INDEX NAME="service_ctx_idx" UNIQUE="false" FIELDS="serviceidentifier, contextid"/>
       </INDEXES>
     </TABLE>
@@ -64,6 +68,59 @@
         <INDEX NAME="timecreated_idx" UNIQUE="false" FIELDS="timecreated"/>
         <INDEX NAME="userid_idx" UNIQUE="false" FIELDS="userid"/>
         <INDEX NAME="action_idx" UNIQUE="false" FIELDS="action"/>
+      </INDEXES>
+    </TABLE>
+    <TABLE NAME="webservice_mcp_oauth_client" COMMENT="Registered OAuth clients allowed to request MCP access.">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="clientid" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Public OAuth client id."/>
+        <FIELD NAME="clientsecret" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="Hashed client secret for confidential clients."/>
+        <FIELD NAME="clientname" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Display label shown during authorization."/>
+        <FIELD NAME="redirecturis" TYPE="text" NOTNULL="true" SEQUENCE="false" COMMENT="JSON array of registered redirect URIs."/>
+        <FIELD NAME="scope" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Registered maximum scope set for the client."/>
+        <FIELD NAME="granttypes" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="JSON array of supported grant types."/>
+        <FIELD NAME="responsetypes" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="JSON array of supported response types."/>
+        <FIELD NAME="tokenauthmethod" TYPE="char" LENGTH="32" NOTNULL="true" DEFAULT="none" SEQUENCE="false" COMMENT="OAuth token endpoint auth method."/>
+        <FIELD NAME="isdynamic" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="1" SEQUENCE="false" COMMENT="Whether the client came from dynamic client registration."/>
+        <FIELD NAME="revoked" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Whether the client has been revoked."/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="uniq_clientid" TYPE="unique" FIELDS="clientid"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="revoked_idx" UNIQUE="false" FIELDS="revoked"/>
+      </INDEXES>
+    </TABLE>
+    <TABLE NAME="webservice_mcp_oauth_code" COMMENT="Short-lived OAuth authorization codes for the MCP OAuth server.">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="expiresat" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Authorization-code expiry timestamp."/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Resource owner user id."/>
+        <FIELD NAME="clientid" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="OAuth client id bound to this code."/>
+        <FIELD NAME="code" TYPE="char" LENGTH="128" NOTNULL="true" SEQUENCE="false" COMMENT="Opaque authorization code."/>
+        <FIELD NAME="redirecturi" TYPE="text" NOTNULL="true" SEQUENCE="false" COMMENT="Redirect URI bound to the authorization code."/>
+        <FIELD NAME="scope" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Granted scope set."/>
+        <FIELD NAME="resourceuri" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Canonical MCP resource URI requested by the client."/>
+        <FIELD NAME="contextid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Restricted context selected for the resulting connector tokens."/>
+        <FIELD NAME="serviceidentifier" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Connector service identifier that will back the resulting access token."/>
+        <FIELD NAME="codechallenge" TYPE="char" LENGTH="128" NOTNULL="true" SEQUENCE="false" COMMENT="PKCE code challenge."/>
+        <FIELD NAME="codechallengemethod" TYPE="char" LENGTH="16" NOTNULL="true" DEFAULT="S256" SEQUENCE="false" COMMENT="PKCE challenge method."/>
+        <FIELD NAME="used" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Whether the authorization code has been consumed."/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="userid_fk" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+        <KEY NAME="contextid_fk" TYPE="foreign" FIELDS="contextid" REFTABLE="context" REFFIELDS="id"/>
+        <KEY NAME="uniq_code" TYPE="unique" FIELDS="code"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="clientid_idx" UNIQUE="false" FIELDS="clientid"/>
+        <INDEX NAME="expiresat_idx" UNIQUE="false" FIELDS="expiresat"/>
       </INDEXES>
     </TABLE>
   </TABLES>

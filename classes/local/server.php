@@ -136,7 +136,7 @@ class server extends webservice_base_server {
      *
      * @return bool True if the request is a tools/call request, false otherwise.
      */
-    private function is_tool_call(): bool {
+    protected function is_tool_call(): bool {
         return !empty($this->mcprequest->method) && $this->mcprequest->method === 'tools/call';
     }
 

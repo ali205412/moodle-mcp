@@ -30,8 +30,10 @@ use advanced_testcase;
 use context_course;
 use context_system;
 use core_external\restricted_context_exception;
+use moodle_exception;
 use required_capability_exception;
 use stdClass;
+use webservice_mcp\local\oauth\service as oauth_service;
 use webservice_mcp\local\request;
 use webservice_mcp\local\transport\protocol_headers;
 
@@ -71,6 +73,33 @@ final class transport_server_test extends advanced_testcase {
 
         $this->assertTrue($server->preflightcalled);
         $this->assertFalse($server->authcalled);
+    }
+
+    /**
+     * Test HEAD probes without a token return an OAuth challenge instead of 405.
+     */
+    public function test_transport_server_handles_head_probe_with_oauth_challenge(): void {
+        $this->resetAfterTest(true);
+        set_config('oauthenabled', 1, 'webservice_mcp');
+
+        $server = new testable_transport_server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
+
+        $previousmethod = $_SERVER['REQUEST_METHOD'] ?? null;
+        $_SERVER['REQUEST_METHOD'] = 'HEAD';
+
+        $server->run();
+
+        if ($previousmethod === null) {
+            unset($_SERVER['REQUEST_METHOD']);
+        } else {
+            $_SERVER['REQUEST_METHOD'] = $previousmethod;
+        }
+
+        $this->assertSame(401, $server->capturedstatus);
+        $challenge = implode("\n", $server->capturedheaders);
+        $this->assertStringContainsString('WWW-Authenticate: Bearer realm="Moodle MCP"', $challenge);
+        $this->assertStringContainsString('Access-Control-Allow-Methods: POST, OPTIONS, DELETE, HEAD', $challenge);
+        $this->assertStringContainsString('/webservice/mcp/.well-known/oauth-protected-resource', $challenge);
     }
 
     /**
@@ -337,5 +366,103 @@ final class transport_server_test extends advanced_testcase {
         $this->assertSame('context', $contexterror['error']['data']['restriction']['category']);
         $this->assertNotEmpty($caperror['error']['data']['auditId']);
         $this->assertNotEmpty($contexterror['error']['data']['auditId']);
+    }
+
+    /**
+     * Test invalid-token errors emit an OAuth Bearer challenge header.
+     */
+    public function test_transport_server_send_error_emits_bearer_challenge_for_invalid_token(): void {
+        $this->resetAfterTest(true);
+        set_config('oauthenabled', 1, 'webservice_mcp');
+
+        $server = new testable_transport_server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
+        $server->set_request_for_test(new request([
+            'jsonrpc' => '2.0',
+            'method' => 'initialize',
+            'id' => 12,
+            'params' => [
+                'protocolVersion' => protocol_headers::DEFAULT_PROTOCOL_VERSION,
+            ],
+        ]));
+
+        set_debugging(DEBUG_NONE);
+        $server->send_error_for_test(new moodle_exception('invalidtoken', 'webservice'));
+        $this->resetDebugging();
+
+        $this->assertSame(401, $server->capturedstatus);
+        $challenge = implode("\n", $server->capturedheaders);
+        $this->assertStringContainsString('WWW-Authenticate: Bearer realm="Moodle MCP"', $challenge);
+        $this->assertStringContainsString('resource_metadata="', $challenge);
+        $this->assertStringContainsString('/webservice/mcp/.well-known/oauth-protected-resource', $challenge);
+    }
+
+    /**
+     * Test write wrappers are blocked when an OAuth token only grants read scope.
+     */
+    public function test_transport_server_blocks_write_wrapper_without_write_scope(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+
+        $user = $this->getDataGenerator()->create_user();
+        $course = $this->getDataGenerator()->create_course();
+        $coursecontext = context_course::instance($course->id);
+        $this->getDataGenerator()->enrol_user($user->id, $course->id);
+
+        $systemroleid = $this->getDataGenerator()->create_role();
+        assign_capability('webservice/mcp:use', CAP_ALLOW, $systemroleid, context_system::instance());
+        role_assign($systemroleid, $user->id, context_system::instance());
+
+        $courseroleid = $this->getDataGenerator()->create_role();
+        assign_capability('moodle/course:update', CAP_ALLOW, $courseroleid, $coursecontext);
+        assign_capability('moodle/course:manageactivities', CAP_ALLOW, $courseroleid, $coursecontext);
+        role_assign($courseroleid, $user->id, $coursecontext);
+        accesslib_clear_all_caches_for_unit_testing();
+
+        $service = (object)[
+            'name' => 'OAuth Wrapper Scope Service',
+            'enabled' => 1,
+            'requiredcapability' => null,
+            'restrictedusers' => 0,
+            'component' => null,
+            'timecreated' => time(),
+            'timemodified' => time(),
+            'shortname' => 'oauth_wrapper_scope_service',
+            'downloadfiles' => 0,
+            'uploadfiles' => 0,
+        ];
+        $DB->insert_record('external_services', $service);
+
+        $server = new testable_transport_server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
+        $server->set_public_token_for_test('oauth-readonly-token');
+        $server->apply_identity_for_test((object)[
+            'user' => $user,
+            'restrictedcontext' => $coursecontext,
+            'restrictedservice' => 'oauth_wrapper_scope_service',
+            'scope' => oauth_service::SCOPE_READ,
+            'resourceuri' => (new oauth_service())->canonical_resource_uri(),
+            'oauthclientid' => 'mcp_readonly_client',
+        ]);
+        $server->set_transport_request_for_test([
+            'sessionid' => 'oauth-wrapper-session',
+            'protocolversion' => protocol_headers::DEFAULT_PROTOCOL_VERSION,
+        ]);
+        $server->set_request_for_test(new request([
+            'jsonrpc' => '2.0',
+            'method' => 'tools/call',
+            'id' => 314,
+            'params' => ['name' => 'wrapper_course_create_missing_sections'],
+        ]));
+        $server->set_tool_call_for_test('wrapper_course_create_missing_sections', [
+            'courseid' => $course->id,
+            'sectionnums' => [1, 2],
+        ]);
+
+        $server->execute_wrapper_tool_for_test();
+        $payload = json_decode($server->capturedbody, true);
+
+        $this->assertSame(403, $server->capturedstatus);
+        $this->assertSame('mcp:write', $payload['error']['data']['requiredScope']);
+        $this->assertStringContainsString('insufficient_scope', implode("\n", $server->capturedheaders));
     }
 }

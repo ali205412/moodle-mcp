@@ -14,20 +14,19 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
-/**
- * MCP web service plugin version information.
- *
- * @package     webservice_mcp
- * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
- * @copyright   2025 MohammadReza PourMohammad
- * @link        https://onbir.dev
- * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
- */
+declare(strict_types=1);
 
-defined('MOODLE_INTERNAL') || die();
+define('NO_DEBUG_DISPLAY', true);
 
-$plugin->version = 2026042201;
-$plugin->requires = 2023041800;
-$plugin->component = 'webservice_mcp';
-$plugin->maturity = MATURITY_BETA;
-$plugin->release = '0.7.1';
+require('../../../../config.php');
+
+$oauth = new \webservice_mcp\local\oauth\service();
+
+if (!$oauth->is_enabled()) {
+    http_response_code(404);
+    exit;
+}
+
+header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: public, max-age=300');
+echo json_encode($oauth->build_protected_resource_metadata(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);

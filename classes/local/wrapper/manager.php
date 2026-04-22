@@ -97,6 +97,18 @@ class manager {
     }
 
     /**
+     * Determine whether the named wrapper mutates Moodle state.
+     *
+     * @param string $name Tool name.
+     * @return bool
+     */
+    public function is_mutating(string $name): bool {
+        return !in_array($name, [
+            'wrapper_question_preview_question',
+        ], true);
+    }
+
+    /**
      * Return only wrapper definitions currently discoverable in the restricted context.
      *
      * @param context $restrictedcontext Current restricted context.
