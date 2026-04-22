@@ -19,6 +19,7 @@ namespace webservice_mcp;
 use advanced_testcase;
 use context_course;
 use context_system;
+use core_external\external_api;
 use webservice_mcp\local\wrapper\definition;
 use webservice_mcp\local\wrapper\manager;
 
@@ -87,6 +88,13 @@ final class wrapper_manager_test extends advanced_testcase {
         $this->assertContains('wrapper_course_set_module_visibility', $names);
         $this->assertContains('wrapper_course_duplicate_modules', $names);
         $this->assertContains('wrapper_course_delete_modules', $names);
+        $this->assertContains('wrapper_question_create_category', $names);
+        $this->assertContains('wrapper_question_create_question', $names);
+        $this->assertContains('wrapper_question_import_questions', $names);
+        $this->assertContains('wrapper_gradebook_create_manual_item', $names);
+        $this->assertContains('wrapper_gradebook_update_category', $names);
+        $this->assertContains('wrapper_badge_create_badge', $names);
+        $this->assertContains('wrapper_badge_award_badge', $names);
     }
 
     /**
@@ -158,5 +166,67 @@ final class wrapper_manager_test extends advanced_testcase {
 
         $this->assertTrue($result['status']);
         $this->assertCount(2, $result['sections']);
+    }
+
+    /**
+     * Test built-in question category wrapper can execute safely.
+     */
+    public function test_wrapper_manager_executes_question_category_wrapper(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+        external_api::set_context_restriction(null);
+
+        $user = $this->getDataGenerator()->create_user();
+        $roleid = $this->getDataGenerator()->create_role();
+        assign_capability('moodle/question:managecategory', CAP_ALLOW, $roleid, context_system::instance());
+        role_assign($roleid, $user->id, context_system::instance());
+        accesslib_clear_all_caches_for_unit_testing();
+        $this->setUser($user);
+
+        $manager = new manager();
+        $result = $manager->execute(
+            'wrapper_question_create_category',
+            [
+                'contextid' => context_system::instance()->id,
+                'name' => 'Wrapper-created category',
+            ],
+            context_system::instance(),
+            $user
+        );
+
+        $this->assertSame('Wrapper-created category', $result['name']);
+        $this->assertTrue($DB->record_exists('question_categories', ['id' => $result['categoryid']]));
+    }
+
+    /**
+     * Test built-in badge wrapper can execute safely.
+     */
+    public function test_wrapper_manager_executes_badge_wrapper(): void {
+        $this->resetAfterTest(true);
+        external_api::set_context_restriction(null);
+
+        $user = $this->getDataGenerator()->create_user();
+        $roleid = $this->getDataGenerator()->create_role();
+        assign_capability('moodle/badges:createbadge', CAP_ALLOW, $roleid, context_system::instance());
+        role_assign($roleid, $user->id, context_system::instance());
+        accesslib_clear_all_caches_for_unit_testing();
+        $this->setUser($user);
+
+        $manager = new manager();
+        $result = $manager->execute(
+            'wrapper_badge_create_badge',
+            [
+                'payload' => [
+                    'name' => 'Wrapper Badge',
+                    'description' => 'Created through the wrapper manager test.',
+                ],
+            ],
+            context_system::instance(),
+            $user
+        );
+
+        $this->assertSame('Wrapper Badge', $result['name']);
+        $this->assertGreaterThan(0, $result['badgeid']);
     }
 }

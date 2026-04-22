@@ -792,4 +792,36 @@ final class tool_provider_test extends externallib_advanced_testcase {
         $this->assertSame('wrapper', $wrapper['x-moodle']['provenance']['source']);
         $this->assertSame('high', $wrapper['x-moodle']['risk']['level']);
     }
+
+    /**
+     * Test wrapper tools project domain-specific surface metadata for parity wrappers.
+     */
+    public function test_list_tools_projects_parity_wrapper_surface_metadata(): void {
+        $this->resetAfterTest(true);
+
+        $user = $this->getDataGenerator()->create_user();
+        $roleid = $this->getDataGenerator()->create_role();
+        assign_capability('moodle/question:add', CAP_ALLOW, $roleid, context_system::instance());
+        assign_capability('moodle/question:managecategory', CAP_ALLOW, $roleid, context_system::instance());
+        assign_capability('moodle/grade:manage', CAP_ALLOW, $roleid, context_system::instance());
+        assign_capability('moodle/badges:createbadge', CAP_ALLOW, $roleid, context_system::instance());
+        role_assign($roleid, $user->id, context_system::instance());
+        accesslib_clear_all_caches_for_unit_testing();
+
+        $serviceid = $this->create_test_service(['core_course_get_contents']);
+        $result = tool_provider::list_tools_for_service_ids(
+            [$serviceid],
+            [
+                'allow_wrappers' => true,
+                'restrictedcontext' => context_system::instance(),
+                'user' => $user,
+            ]
+        );
+
+        $tools = array_column($result['tools'], null, 'name');
+
+        $this->assertSame('question_bank', $tools['wrapper_question_create_question']['x-moodle']['surface']['area']);
+        $this->assertSame('gradebook', $tools['wrapper_gradebook_create_manual_item']['x-moodle']['surface']['area']);
+        $this->assertSame('badges', $tools['wrapper_badge_create_badge']['x-moodle']['surface']['area']);
+    }
 }
