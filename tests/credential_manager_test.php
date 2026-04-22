@@ -152,4 +152,48 @@ final class credential_manager_test extends advanced_testcase {
         $this->assertSame(1, (int)$stored->revoked);
         $this->assertNull($manager->resolve_credential($credential->token));
     }
+
+    /**
+     * Test OAuth-originated credentials persist scope, resource, and client metadata.
+     */
+    public function test_issue_oauth_credentials_persist_scope_and_resource_metadata(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+
+        $manager = new credential_manager();
+        $access = $manager->issue_oauth_access_token(
+            $this->create_service_stub(),
+            $user->id,
+            context_system::instance(),
+            [
+                'scope' => 'mcp:read mcp:write offline_access',
+                'resourceuri' => 'https://example.com/webservice/mcp/server.php',
+                'oauthclientid' => 'mcp_test_client',
+            ]
+        );
+        $refresh = $manager->issue_oauth_refresh_token(
+            $this->create_service_stub(),
+            $user->id,
+            context_system::instance(),
+            [
+                'scope' => 'mcp:read mcp:write offline_access',
+                'resourceuri' => 'https://example.com/webservice/mcp/server.php',
+                'oauthclientid' => 'mcp_test_client',
+            ]
+        );
+
+        $storedaccess = $DB->get_record('webservice_mcp_credential', ['id' => $access->id], '*', MUST_EXIST);
+        $storedrefresh = $DB->get_record('webservice_mcp_credential', ['id' => $refresh->id], '*', MUST_EXIST);
+
+        $this->assertSame(credential_manager::TOKEN_TYPE_DURABLE, (int)$storedaccess->tokentype);
+        $this->assertSame('mcp:read mcp:write offline_access', (string)$storedaccess->scope);
+        $this->assertSame('https://example.com/webservice/mcp/server.php', (string)$storedaccess->resourceuri);
+        $this->assertSame('mcp_test_client', (string)$storedaccess->oauthclientid);
+        $this->assertSame(credential_manager::TOKEN_TYPE_REFRESH, (int)$storedrefresh->tokentype);
+        $this->assertSame('mcp_test_client', (string)$storedrefresh->oauthclientid);
+    }
 }

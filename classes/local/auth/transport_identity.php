@@ -57,6 +57,10 @@ class transport_identity {
             return null;
         }
 
+        if ((int)$credential->tokentype === credential_manager::TOKEN_TYPE_REFRESH) {
+            return null;
+        }
+
         $user = $DB->get_record('user', ['id' => $credential->userid], '*', MUST_EXIST);
         $context = context::instance_by_id((int)$credential->contextid);
 
@@ -66,6 +70,9 @@ class transport_identity {
             'restrictedservice' => $credential->serviceidentifier,
             'tokentype' => (int)$credential->tokentype,
             'sid' => $credential->sid,
+            'scope' => (string)($credential->scope ?? ''),
+            'resourceuri' => !empty($credential->resourceuri) ? (string)$credential->resourceuri : null,
+            'oauthclientid' => !empty($credential->oauthclientid) ? (string)$credential->oauthclientid : null,
             'credential' => $credential,
         ];
     }

@@ -167,6 +167,26 @@ final class testable_transport_server extends transport_server {
     }
 
     /**
+     * Invoke the protected transport error emitter for assertions.
+     *
+     * @param \Throwable|null $exception Optional exception.
+     * @return void
+     */
+    public function send_error_for_test(?\Throwable $exception = null): void {
+        $this->send_error($exception);
+    }
+
+    /**
+     * Invoke the protected OAuth scope guard for assertions.
+     *
+     * @param bool $write Whether write scope is required.
+     * @return bool
+     */
+    public function ensure_oauth_scope_for_test(bool $write): bool {
+        return $this->ensure_oauth_scope($write);
+    }
+
+    /**
      * Intercept auth during request-lifecycle tests.
      *
      * @return void
@@ -218,6 +238,17 @@ final class testable_transport_server extends transport_server {
      */
     protected function emit(string $body): void {
         $this->capturedbody .= $body;
+    }
+
+    /**
+     * Reset captured transport state between assertions.
+     *
+     * @return void
+     */
+    public function reset_capture_for_test(): void {
+        $this->capturedbody = '';
+        $this->capturedheaders = [];
+        $this->capturedstatus = 200;
     }
 
     /**

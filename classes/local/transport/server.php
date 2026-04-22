@@ -26,6 +26,7 @@ use moodle_exception;
 use stdClass;
 use webservice_mcp\local\audit\logger as audit_logger;
 use webservice_mcp\local\auth\transport_identity;
+use webservice_mcp\local\oauth\service as oauth_service;
 use webservice_mcp\local\request;
 use webservice_mcp\local\server as legacy_server;
 use webservice_mcp\local\stream\replay_store;
@@ -44,7 +45,7 @@ use webservice_mcp\local\wrapper\manager as wrapper_manager;
  */
 class server extends legacy_server {
     /** Primary endpoint allowed methods. */
-    protected const ALLOW = 'POST, OPTIONS, DELETE';
+    protected const ALLOW = 'POST, OPTIONS, DELETE, HEAD';
 
     /** HTTP methods used during CORS negotiation. */
     protected const ALLOW_HEADERS = 'Accept, Content-Type, Authorization, X-Requested-With, '
@@ -158,6 +159,11 @@ class server extends legacy_server {
                 return;
             }
 
+            if ($this->httpmethod === 'HEAD') {
+                $this->handle_head_request();
+                return;
+            }
+
             if ($this->httpmethod !== 'POST') {
                 $this->send_method_not_allowed();
                 return;
@@ -186,6 +192,10 @@ class server extends legacy_server {
             $this->release_transport_session();
 
             if (!empty($this->transportrequest['initialization'])) {
+                if (!$this->ensure_oauth_scope(false)) {
+                    $this->session_cleanup();
+                    return;
+                }
                 $this->send_initialize_response();
                 $this->session_cleanup();
                 return;
@@ -209,6 +219,10 @@ class server extends legacy_server {
             }
 
             $this->load_function_info();
+            if (!$this->ensure_external_function_scope()) {
+                $this->session_cleanup();
+                return;
+            }
             $this->execute();
             $this->send_response();
             $this->session_cleanup();
@@ -343,6 +357,11 @@ class server extends legacy_server {
         $this->userid = $user->id;
         $this->restricted_context = $identity->restrictedcontext;
         $this->restricted_serviceid = (int)$service->id;
+
+        if (!empty($identity->resourceuri) &&
+                !hash_equals((new oauth_service())->canonical_resource_uri(), (string)$identity->resourceuri)) {
+            throw new moodle_exception('invalidtoken', 'webservice');
+        }
 
         if ($this->authmethod !== WEBSERVICE_AUTHMETHOD_SESSION_TOKEN &&
                 !has_capability("webservice/{$this->wsname}:use", $this->restricted_context, $user)) {
@@ -502,7 +521,15 @@ class server extends legacy_server {
      */
     protected function send_error($ex = null): void {
         $this->emit_json_headers();
-        $this->set_status($this->exception_status($ex));
+        $status = $this->exception_status($ex);
+        if ($status === 401 && $this->oauth_service()->is_enabled()) {
+            $this->send_header('WWW-Authenticate: ' . $this->oauth_service()->build_bearer_challenge(
+                'invalid_token',
+                'Authorization is required to access this MCP server.',
+                $this->oauth_default_scope()
+            ));
+        }
+        $this->set_status($status);
 
         if ($ex !== null && debugging('', DEBUG_MINIMAL)) {
             $this->log_exception_for_debug($ex);
@@ -648,6 +675,9 @@ class server extends legacy_server {
 
         switch ($this->mcprequest->method) {
             case 'tools/list':
+                if (!$this->ensure_oauth_scope(false)) {
+                    return;
+                }
                 $this->send_tools_list_response();
                 return;
 
@@ -930,7 +960,12 @@ class server extends legacy_server {
      * @return void
      */
     protected function execute_wrapper_tool(): void {
-        $result = (new wrapper_manager())->execute(
+        $wrappers = new wrapper_manager();
+        if (!$this->ensure_oauth_scope($wrappers->is_mutating($this->functionname))) {
+            return;
+        }
+
+        $result = $wrappers->execute(
             $this->functionname,
             is_array($this->parameters) ? $this->parameters : [],
             $this->restricted_context,
@@ -1030,7 +1065,7 @@ class server extends legacy_server {
     protected function current_request_is_mutating(): bool {
         if (!empty($this->functionname) && $this->transportidentity !== null &&
                 (new wrapper_manager())->find($this->functionname) !== null) {
-            return true;
+            return (new wrapper_manager())->is_mutating($this->functionname);
         }
 
         if (isset($this->function->type)) {
@@ -1038,6 +1073,45 @@ class server extends legacy_server {
         }
 
         return false;
+    }
+
+    /**
+     * Handle HEAD probes without emitting a response body.
+     *
+     * @return void
+     */
+    protected function handle_head_request(): void {
+        $this->emit_json_headers(false);
+        $this->token = $this->extract_token();
+        $this->publictoken = $this->token;
+
+        if (empty($this->publictoken)) {
+            if ($this->oauth_service()->is_enabled()) {
+                $this->send_header('WWW-Authenticate: ' . $this->oauth_service()->build_bearer_challenge(
+                    'invalid_token',
+                    'Authorization is required to access this MCP server.',
+                    $this->oauth_default_scope()
+                ));
+            }
+            $this->set_status(401);
+            return;
+        }
+
+        try {
+            $this->authenticate_user();
+            $this->release_transport_session();
+            $this->set_status(204);
+        } catch (\Throwable $exception) {
+            $status = $this->exception_status($exception);
+            if ($status === 401 && $this->oauth_service()->is_enabled()) {
+                $this->send_header('WWW-Authenticate: ' . $this->oauth_service()->build_bearer_challenge(
+                    'invalid_token',
+                    'Authorization is required to access this MCP server.',
+                    $this->oauth_default_scope()
+                ));
+            }
+            $this->set_status($status);
+        }
     }
 
     /**
@@ -1123,5 +1197,114 @@ class server extends legacy_server {
      */
     protected function token_hash(): string {
         return hash('sha256', (string)($this->publictoken ?? $this->token ?? ''));
+    }
+
+    /**
+     * Return the plugin OAuth helper.
+     *
+     * @return oauth_service
+     */
+    protected function oauth_service(): oauth_service {
+        return new oauth_service();
+    }
+
+    /**
+     * Return the default scope hint used in Bearer challenges.
+     *
+     * @return string
+     */
+    protected function oauth_default_scope(): string {
+        return $this->oauth_service()->default_scope_string();
+    }
+
+    /**
+     * Determine whether the current connector token is OAuth-scoped.
+     *
+     * @return bool
+     */
+    protected function oauth_scope_enforced(): bool {
+        if ($this->transportidentity === null) {
+            return false;
+        }
+
+        return !empty($this->transportidentity->oauthclientid)
+            || !empty($this->transportidentity->resourceuri)
+            || trim((string)($this->transportidentity->scope ?? '')) !== '';
+    }
+
+    /**
+     * Ensure the current request has the required OAuth scope.
+     *
+     * @param bool $write Whether the request needs write scope.
+     * @return bool
+     */
+    protected function ensure_oauth_scope(bool $write): bool {
+        if (!$this->oauth_scope_enforced()) {
+            return true;
+        }
+
+        $requiredscope = $write ? oauth_service::SCOPE_WRITE : oauth_service::SCOPE_READ;
+        $grantedscope = (string)($this->transportidentity->scope ?? '');
+
+        if (oauth_service::scope_contains($grantedscope, $requiredscope)) {
+            return true;
+        }
+
+        $this->send_oauth_scope_error($requiredscope);
+        return false;
+    }
+
+    /**
+     * Ensure the current harvested external function has the correct scope.
+     *
+     * @return bool
+     */
+    protected function ensure_external_function_scope(): bool {
+        if (!$this->oauth_scope_enforced()) {
+            return true;
+        }
+
+        $requireswrite = isset($this->function->type) && (string)$this->function->type !== 'read';
+        return $this->ensure_oauth_scope($requireswrite);
+    }
+
+    /**
+     * Send a 403 insufficient-scope response.
+     *
+     * @param string $requiredscope Required OAuth scope.
+     * @return void
+     */
+    protected function send_oauth_scope_error(string $requiredscope): void {
+        $this->emit_json_headers();
+        $this->send_header('WWW-Authenticate: ' . $this->oauth_service()->build_bearer_challenge(
+            'insufficient_scope',
+            'The presented access token does not grant the required scope.',
+            $requiredscope
+        ));
+        $this->set_status(403);
+
+        $payload = [
+            'jsonrpc' => $this->mcprequest->jsonrpc ?? '2.0',
+            'error' => [
+                'code' => -32003,
+                'message' => 'Insufficient OAuth scope.',
+                'data' => [
+                    'requiredScope' => $requiredscope,
+                ],
+            ],
+            'id' => $this->mcprequest->id ?? null,
+        ];
+
+        if ($auditid = $this->record_audit_event(
+            $this->audit_action_name(),
+            $this->functionname ?: null,
+            $requiredscope === oauth_service::SCOPE_WRITE,
+            'error',
+            'insufficient_scope'
+        )) {
+            $payload['error']['data']['auditId'] = $auditid;
+        }
+
+        $this->emit($this->safe_json_encode($payload));
     }
 }

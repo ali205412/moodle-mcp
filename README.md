@@ -4,7 +4,7 @@
 
 It does four core things:
 
-- boots users into MCP through Moodle's own login and SSO flow
+- boots users into MCP through Moodle's own login and SSO flow, with a plugin-owned OAuth server for Claude-compatible connectors
 - serves remote MCP traffic over Streamable HTTP, with optional legacy SSE compatibility
 - harvests Moodle's registered external functions into a permission-gated tool catalog
 - fills selected UI-only gaps with plugin-owned wrappers across course authoring, question bank, gradebook, and badges
@@ -15,6 +15,7 @@ This repository targets Moodle `4.2` through `4.5` and treats the Moodle source 
 
 - Moodle-native browser bootstrap at `/webservice/mcp/launch.php`
 - primary MCP transport at `/webservice/mcp/server.php`
+- OAuth authorization, token, registration, and discovery endpoints under `/webservice/mcp/oauth/`
 - optional SSE compatibility transport at `/webservice/mcp/sse.php`
 - site-wide harvested catalog of `external_functions`
 - grouped, paginated discovery with coverage metadata
@@ -118,6 +119,8 @@ Available settings:
   Browser-facing origin allowlist for remote transport endpoints.
 - `enablelegacysse`
   Enables the SSE compatibility endpoint.
+- `oauthenabled`
+  Enables the plugin-owned OAuth authorization server for Claude-compatible connectors.
 - `transportsessionttl`
   TTL for MCP transport sessions.
 - `replayttl`
@@ -127,38 +130,75 @@ Available settings:
 
 ## Authentication model
 
-### Recommended flow
+### Claude / remote MCP
 
-Use Moodle's browser login flow first, then use the returned connector credential against MCP.
-
-1. send the user to:
+For Claude web connectors and Claude Code remote HTTP servers, use the MCP transport URL directly:
 
 ```text
-/webservice/mcp/launch.php?format=json
+/webservice/mcp/server.php
 ```
 
-2. Moodle handles login normally
-   Existing sessions work, and OAuth2/SSO sites keep using Moodle's own auth path.
-3. the plugin provisions or syncs its owned external service and grants the current user access to it
-4. the endpoint returns a short-lived connector credential payload
-5. the MCP client uses that credential against the MCP transport endpoint
+The transport returns an OAuth Bearer challenge that points clients at the plugin-owned resource metadata and authorization server endpoints. The user then completes:
 
-### Legacy/manual mode
+1. normal Moodle login
+   Existing sessions still work, and Moodle SSO/OAuth2 login flows remain the authority.
+2. an OAuth consent screen hosted by this plugin
+3. token exchange and refresh handled by the MCP client
 
-The transport still accepts raw Moodle web service tokens. That is useful for compatibility or controlled service-account style integrations, but it is no longer the recommended connector path.
+This is the recommended connector path for Claude-compatible clients.
+
+### Manual bootstrap / compatibility mode
+
+`launch.php` still works for manual testing, non-OAuth clients, and debugging bootstrap credentials. The transport also still accepts raw Moodle web service tokens for compatibility and controlled service-account integrations.
 
 ## Endpoints
-
-### Browser bootstrap
-
-```text
-https://your-moodle-site.example/webservice/mcp/launch.php?format=json
-```
 
 ### Primary MCP transport
 
 ```text
 https://your-moodle-site.example/webservice/mcp/server.php
+```
+
+### OAuth authorize endpoint
+
+```text
+https://your-moodle-site.example/webservice/mcp/oauth/authorize.php
+```
+
+### OAuth token endpoint
+
+```text
+https://your-moodle-site.example/webservice/mcp/oauth/token.php
+```
+
+### OAuth dynamic client registration endpoint
+
+```text
+https://your-moodle-site.example/webservice/mcp/oauth/register.php
+```
+
+### Protected resource metadata
+
+```text
+https://your-moodle-site.example/webservice/mcp/.well-known/oauth-protected-resource
+```
+
+### Authorization server metadata
+
+```text
+https://your-moodle-site.example/webservice/mcp/.well-known/oauth-authorization-server
+```
+
+### OpenID discovery
+
+```text
+https://your-moodle-site.example/webservice/mcp/.well-known/openid-configuration
+```
+
+### Browser bootstrap
+
+```text
+https://your-moodle-site.example/webservice/mcp/launch.php?format=json
 ```
 
 ### Legacy SSE compatibility transport
@@ -183,12 +223,19 @@ Query parameter:
 
 `YOUR_TOKEN` can be either:
 
+- an OAuth access token issued by `/webservice/mcp/oauth/token.php`
 - a connector credential returned by `launch.php`
 - a raw Moodle web service token
 
 ## Minimal examples
 
-### Bootstrap
+### Claude connector URL
+
+```text
+https://your-moodle-site.example/webservice/mcp/server.php
+```
+
+### Manual bootstrap
 
 ```bash
 curl "https://your-moodle-site.example/webservice/mcp/launch.php?format=json" \
@@ -368,6 +415,7 @@ webservice/mcp/
 ├── classes/local/wrapper/      plugin-owned wrapper framework
 ├── db/                         capabilities, caches, install/upgrade
 ├── docker/                     local CI runner image and scripts
+├── oauth/                      OAuth authorize/token/metadata endpoints
 ├── scripts/                    local test and release packaging helpers
 ├── tests/                      PHPUnit coverage
 ├── launch.php                  browser bootstrap endpoint

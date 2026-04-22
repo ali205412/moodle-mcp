@@ -46,11 +46,20 @@ class credential_manager {
     /** Explicit durable remote grant. */
     public const TOKEN_TYPE_DURABLE = 1;
 
+    /** OAuth refresh token. */
+    public const TOKEN_TYPE_REFRESH = 2;
+
     /** Connector credential table name. */
     private const TABLE = 'webservice_mcp_credential';
 
     /** Default bootstrap lifetime in seconds. */
     private const DEFAULT_BOOTSTRAP_TTL = 900;
+
+    /** Default OAuth access-token lifetime in seconds. */
+    private const DEFAULT_OAUTH_ACCESS_TTL = 3600;
+
+    /** Default OAuth refresh-token lifetime in seconds. */
+    private const DEFAULT_REFRESH_TTL = 2592000;
 
     /**
      * Issue a short-lived bootstrap credential.
@@ -108,6 +117,73 @@ class credential_manager {
                 'validuntil' => $validuntil,
                 'iprestriction' => $options['iprestriction'] ?? null,
                 'name' => $options['name'] ?? $this->default_name('Remote'),
+                'scope' => $options['scope'] ?? '',
+                'resourceuri' => $options['resourceuri'] ?? null,
+                'oauthclientid' => $options['oauthclientid'] ?? null,
+                'usermodified' => $options['usermodified'] ?? $userid,
+            ]
+        );
+    }
+
+    /**
+     * Issue an OAuth access token backed by the connector credential table.
+     *
+     * @param stdClass $service Service-like object with id/shortname/name metadata.
+     * @param int $userid Moodle user id.
+     * @param context|null $context Restricted context for the credential.
+     * @param array $options Optional overrides.
+     * @return stdClass Stored credential record.
+     * @throws dml_exception
+     */
+    public function issue_oauth_access_token(stdClass $service, int $userid, ?context $context = null, array $options = []): stdClass {
+        $context ??= context_system::instance();
+        $validuntil = (int)($options['validuntil'] ?? (time() + self::DEFAULT_OAUTH_ACCESS_TTL));
+
+        return $this->issue_credential(
+            self::TOKEN_TYPE_DURABLE,
+            $service,
+            $userid,
+            $context,
+            [
+                'sid' => null,
+                'validuntil' => $validuntil,
+                'iprestriction' => $options['iprestriction'] ?? null,
+                'name' => $options['name'] ?? $this->default_name('OAuth access'),
+                'scope' => $options['scope'] ?? '',
+                'resourceuri' => $options['resourceuri'] ?? null,
+                'oauthclientid' => $options['oauthclientid'] ?? null,
+                'usermodified' => $options['usermodified'] ?? $userid,
+            ]
+        );
+    }
+
+    /**
+     * Issue an OAuth refresh token backed by the connector credential table.
+     *
+     * @param stdClass $service Service-like object with id/shortname/name metadata.
+     * @param int $userid Moodle user id.
+     * @param context|null $context Restricted context for the credential.
+     * @param array $options Optional overrides.
+     * @return stdClass Stored credential record.
+     * @throws dml_exception
+     */
+    public function issue_oauth_refresh_token(stdClass $service, int $userid, ?context $context = null, array $options = []): stdClass {
+        $context ??= context_system::instance();
+        $validuntil = (int)($options['validuntil'] ?? (time() + self::DEFAULT_REFRESH_TTL));
+
+        return $this->issue_credential(
+            self::TOKEN_TYPE_REFRESH,
+            $service,
+            $userid,
+            $context,
+            [
+                'sid' => null,
+                'validuntil' => $validuntil,
+                'iprestriction' => $options['iprestriction'] ?? null,
+                'name' => $options['name'] ?? $this->default_name('OAuth refresh'),
+                'scope' => $options['scope'] ?? '',
+                'resourceuri' => $options['resourceuri'] ?? null,
+                'oauthclientid' => $options['oauthclientid'] ?? null,
                 'usermodified' => $options['usermodified'] ?? $userid,
             ]
         );
@@ -173,7 +249,15 @@ class credential_manager {
     public function list_credentials_for_user(int $userid): array {
         global $DB;
 
-        return $DB->get_records(self::TABLE, ['userid' => $userid, 'revoked' => 0], 'timecreated DESC');
+        return $DB->get_records_select(
+            self::TABLE,
+            'userid = :userid AND revoked = 0 AND tokentype <> :refreshtype',
+            [
+                'userid' => $userid,
+                'refreshtype' => self::TOKEN_TYPE_REFRESH,
+            ],
+            'timecreated DESC'
+        );
     }
 
     /**
@@ -203,6 +287,9 @@ class credential_manager {
             'sid' => $options['sid'],
             'validuntil' => $options['validuntil'],
             'iprestriction' => $options['iprestriction'],
+            'scope' => (string)($options['scope'] ?? ''),
+            'resourceuri' => $options['resourceuri'] ?? null,
+            'oauthclientid' => $options['oauthclientid'] ?? null,
             'lastaccess' => null,
             'revoked' => 0,
         ];
