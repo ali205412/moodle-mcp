@@ -122,6 +122,11 @@ class tool_provider {
 
         $visibleentries = [];
         foreach ($entries as $entry) {
+            // MCP protocol restricts tool names to a maximum of 64 characters.
+            if (strlen($entry['name'] ?? '') > 64) {
+                continue;
+            }
+
             $risk = $riskanalyzer->analyze($entry);
             $eligibility = $eligibilityresolver->evaluate(
                 $entry,
