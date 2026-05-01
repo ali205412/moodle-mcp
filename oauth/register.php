@@ -28,6 +28,14 @@ $oauth = new oauth_service();
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 header('Pragma: no-cache');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, Accept');
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
 
 try {
     if (!$oauth->is_enabled()) {

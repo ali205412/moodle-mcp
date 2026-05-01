@@ -686,7 +686,7 @@ class server extends legacy_server {
                 return;
 
             default:
-                $this->send_transport_error(400, -32601, 'Method not found', $this->mcprequest->id);
+                $this->send_transport_error(200, -32601, 'Method not found', $this->mcprequest->id);
         }
     }
 
