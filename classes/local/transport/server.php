@@ -1023,17 +1023,17 @@ class server extends legacy_server {
         string $outcome,
         ?string $detailcode = null
     ): ?string {
-        try {
-            $userid = isset($this->transportidentity->user->id) ? (int)$this->transportidentity->user->id : ($this->userid ?? null);
-            $credentialid = isset($this->transportidentity->credential->id)
-                ? (int)$this->transportidentity->credential->id
-                : null;
-            $contextid = isset($this->restricted_context->id)
-                ? (int)$this->restricted_context->id
-                : (isset($this->transportidentity->restrictedcontext->id)
-                    ? (int)$this->transportidentity->restrictedcontext->id
-                    : null);
+        $userid = isset($this->transportidentity->user->id) ? (int)$this->transportidentity->user->id : ($this->userid ?? null);
+        $credentialid = isset($this->transportidentity->credential->id)
+            ? (int)$this->transportidentity->credential->id
+            : null;
+        $contextid = isset($this->restricted_context->id)
+            ? (int)$this->restricted_context->id
+            : (isset($this->transportidentity->restrictedcontext->id)
+                ? (int)$this->transportidentity->restrictedcontext->id
+                : null);
 
+        try {
             return $this->auditlogger->record([
                 'userid' => $userid,
                 'credentialid' => $credentialid,
@@ -1048,6 +1048,9 @@ class server extends legacy_server {
                 'detailcode' => $detailcode,
             ]);
         } catch (\Throwable $exception) {
+            if (defined('PHPUNIT_TEST') && PHPUNIT_TEST) {
+                throw $exception;
+            }
             return null;
         }
     }
