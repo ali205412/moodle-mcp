@@ -97,7 +97,8 @@ class sse_controller extends server {
             $endpointurl = (new \moodle_url('/webservice/mcp/server.php', ['session_id' => $sessionid]))->out(false);
             $this->emit("event: endpoint\n");
             $this->emit("data: {$endpointurl}\n\n");
-            $this->flush();
+            @ob_flush();
+            @flush();
 
             $this->stream_events();
         } catch (\Throwable $exception) {

@@ -132,6 +132,10 @@ class protocol_headers {
         $initialization = $mcpmethod === 'initialize';
         $sessionid = $this->header_value($headers, 'mcp-session-id') ?? $_GET['session_id'] ?? null;
 
+        if ($requiresession && !$initialization && $sessionid === null) {
+            return $this->error('Missing required MCP-Session-Id header or session_id query parameter.');
+        }
+
         $protocolversion = $this->header_value($headers, 'mcp-protocol-version');
         if ($initialization) {
             if ($protocolversion !== null && !$this->is_supported_protocol_version($protocolversion)) {
