@@ -47,10 +47,10 @@ use webservice_mcp\local\wrapper\manager as wrapper_manager;
  */
 class tool_provider {
     /** Default tools/list page size. */
-    private const DEFAULT_LIMIT = 100;
+    private const DEFAULT_LIMIT = 2000;
 
     /** Maximum tools/list page size. */
-    private const MAX_LIMIT = 250;
+    private const MAX_LIMIT = 2000;
 
     /**
      * Retrieve a list of available tools for a given token.
