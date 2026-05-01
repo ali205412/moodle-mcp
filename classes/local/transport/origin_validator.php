@@ -110,6 +110,6 @@ class origin_validator {
         $host = $url->get_host();
         $port = $url->get_port();
 
-        return $port === null ? "{$scheme}://{$host}" : "{$scheme}://{$host}:{$port}";
+        return empty($port) ? "{$scheme}://{$host}" : "{$scheme}://{$host}:{$port}";
     }
 }
