@@ -47,6 +47,16 @@ require_once(__DIR__ . '/fixtures/testable_sse_controller.php');
  */
 final class sse_transport_test extends advanced_testcase {
     /**
+     * Clean up dirty database state left by out-of-transaction audit inserts.
+     */
+    protected function tearDown(): void {
+        global $DB;
+        $DB->delete_records('webservice_mcp_audit');
+        $DB->delete_records('webservice_mcp_credential');
+        parent::tearDown();
+    }
+
+    /**
      * Test SSE compatibility mode must be enabled explicitly.
      */
     public function test_sse_transport_requires_enabled_compatibility_mode(): void {

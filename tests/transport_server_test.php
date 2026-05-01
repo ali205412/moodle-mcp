@@ -52,6 +52,16 @@ require_once(__DIR__ . '/fixtures/testable_transport_server.php');
  */
 final class transport_server_test extends advanced_testcase {
     /**
+     * Clean up dirty database state left by out-of-transaction audit inserts.
+     */
+    protected function tearDown(): void {
+        global $DB;
+        $DB->delete_records('webservice_mcp_audit');
+        $DB->delete_records('webservice_mcp_credential');
+        parent::tearDown();
+    }
+
+    /**
      * Test OPTIONS preflight is handled before auth.
      */
     public function test_transport_server_handles_options_before_authentication(): void {
@@ -263,6 +273,7 @@ final class transport_server_test extends advanced_testcase {
         $this->assertArrayHasKey('nextCursor', $payload['result']);
         $this->assertArrayHasKey('coverage', $payload['result']);
         $this->assertArrayHasKey('groups', $payload['result']);
+        var_dump($payload);
         $this->assertNotEmpty($payload['result']['audit']['id']);
         $this->assertArrayHasKey('eligibility', $payload['result']['tools'][0]['x-moodle']);
         $this->assertArrayHasKey('risk', $payload['result']['tools'][0]['x-moodle']);
