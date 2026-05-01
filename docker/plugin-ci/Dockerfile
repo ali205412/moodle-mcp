@@ -59,4 +59,5 @@ COPY docker/plugin-ci/run-tests.sh /usr/local/bin/run-plugin-ci
 RUN printf "max_input_vars=5000\n" > /usr/local/etc/php/conf.d/moodle-plugin-ci.ini \
  && chmod +x /usr/local/bin/run-plugin-ci
 
+ENV PATH="/opt/node22/bin:$PATH"
 WORKDIR /work

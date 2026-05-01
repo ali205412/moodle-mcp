@@ -84,6 +84,12 @@ try {
 
 $pageurl = new moodle_url('/webservice/mcp/oauth/authorize.php', array_filter($rawparams, static fn($value): bool => $value !== ''));
 
+if (!isloggedin() || isguestuser()) {
+    global $SESSION;
+    $SESSION->wantsurl = $pageurl->out(false);
+    redirect(get_login_url());
+}
+
 require_login(0, false);
 core_user::require_active_user($USER);
 
