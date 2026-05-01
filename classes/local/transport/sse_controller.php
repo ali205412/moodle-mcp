@@ -70,6 +70,11 @@ class sse_controller extends server {
                 return;
             }
 
+            $this->token = $this->extract_token();
+            if (empty($this->token)) {
+                throw new \moodle_exception('invalidtoken', 'webservice');
+            }
+
             if (!$this->prepare_stateful_request()) {
                 return;
             }
