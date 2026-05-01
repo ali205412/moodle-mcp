@@ -46,6 +46,13 @@ try {
         throw new oauth_exception('invalid_request', 400, 'The token endpoint requires POST.');
     }
 
+    if (empty($_POST)) {
+        $input = json_decode(file_get_contents('php://input'), true);
+        if (is_array($input)) {
+            $_POST = $input;
+        }
+    }
+
     [$clientid, $clientsecret] = $oauth->read_client_credentials_from_request();
     $response = $oauth->exchange_token_request($_POST, $clientid, $clientsecret);
 
