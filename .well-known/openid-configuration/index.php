@@ -29,4 +29,13 @@ if (!$oauth->is_enabled()) {
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: public, max-age=300');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, Accept');
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+
 echo json_encode($oauth->build_authorization_server_metadata(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
