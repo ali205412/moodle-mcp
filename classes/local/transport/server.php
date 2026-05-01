@@ -143,6 +143,11 @@ class server extends legacy_server {
                 return;
             }
 
+            $this->token = $this->extract_token();
+            if (empty($this->token)) {
+                throw new \moodle_exception('invalidtoken', 'webservice');
+            }
+
             if ($this->httpmethod === 'DELETE') {
                 if (!$this->prepare_stateful_request()) {
                     return;
