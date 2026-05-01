@@ -269,13 +269,13 @@ final class transport_server_test extends advanced_testcase {
         $this->assertArrayHasKey('nextCursor', $payload['result']);
         $this->assertArrayHasKey('coverage', $payload['result']);
         $this->assertArrayHasKey('groups', $payload['result']);
-        $this->assertNotEmpty($payload['result']['audit']['id']);
+        $this->assertNotEmpty($payload['audit']['id']);
         $this->assertArrayHasKey('eligibility', $payload['result']['tools'][0]['x-moodle']);
         $this->assertArrayHasKey('risk', $payload['result']['tools'][0]['x-moodle']);
         $this->assertArrayHasKey('surface', $payload['result']['tools'][0]['x-moodle']);
         $this->assertArrayHasKey('workflow', $payload['result']['tools'][0]['x-moodle']);
         $this->assertArrayHasKey('execution', $payload['result']['tools'][0]['x-moodle']);
-        $this->assertTrue($DB->record_exists('webservice_mcp_audit', ['auditid' => $payload['result']['audit']['id']]));
+        $this->assertTrue($DB->record_exists('webservice_mcp_audit', ['auditid' => $payload['audit']['id']]));
     }
 
     /**
