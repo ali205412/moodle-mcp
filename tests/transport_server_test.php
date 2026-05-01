@@ -87,7 +87,13 @@ final class transport_server_test extends advanced_testcase {
         $previousmethod = $_SERVER['REQUEST_METHOD'] ?? null;
         $_SERVER['REQUEST_METHOD'] = 'HEAD';
 
+        global $CFG;
+        $olddebug = $CFG->debug;
+        $CFG->debug = DEBUG_NONE;
+        
         $server->run();
+
+        $CFG->debug = $olddebug;
 
         if ($previousmethod === null) {
             unset($_SERVER['REQUEST_METHOD']);
