@@ -120,24 +120,17 @@ class protocol_headers {
      * @return array
      */
     private function validate_post_request(array $headers, ?request $request, bool $requiresession): array {
-        $mcpmethod = $this->header_value($headers, 'mcp-method');
+        $mcpmethod = $this->header_value($headers, 'mcp-method') ?? ($request !== null ? $request->method : null);
         if ($mcpmethod === null) {
-            return $this->error('Missing required Mcp-Method header.');
+            return $this->error('Missing required Mcp-Method header or JSON-RPC method.');
         }
 
         if (!$this->is_visible_ascii($mcpmethod)) {
             return $this->error('Mcp-Method must contain only visible ASCII characters.');
         }
 
-        if ($request !== null && $request->method !== $mcpmethod) {
-            return $this->error('Mcp-Method header does not match the JSON-RPC method.');
-        }
-
         $initialization = $mcpmethod === 'initialize';
-        $sessionid = $this->header_value($headers, 'mcp-session-id');
-        if ($initialization && $sessionid !== null) {
-            return $this->error('MCP-Session-Id is not allowed during initialize.');
-        }
+        $sessionid = $this->header_value($headers, 'mcp-session-id') ?? $_GET['session_id'] ?? null;
 
         $protocolversion = $this->header_value($headers, 'mcp-protocol-version');
         if ($initialization) {
@@ -154,12 +147,11 @@ class protocol_headers {
             }
         }
 
-        $mcpname = $this->header_value($headers, 'mcp-name');
+        $mcpname = $this->header_value($headers, 'mcp-name') ?? $bodyname;
         $requiresname = in_array($mcpmethod, ['tools/call', 'resources/read', 'prompts/get'], true);
-        $bodyname = $this->request_target_name($request);
-
+        
         if ($requiresname && $mcpname === null) {
-            return $this->error('Missing required Mcp-Name header.');
+            return $this->error('Missing required Mcp-Name header or JSON-RPC target name.');
         }
 
         if ($mcpname !== null && !$this->is_visible_ascii($mcpname)) {
@@ -202,9 +194,9 @@ class protocol_headers {
             return $this->error('Unsupported MCP-Protocol-Version header value.');
         }
 
-        $sessionid = $this->header_value($headers, 'mcp-session-id');
+        $sessionid = $this->header_value($headers, 'mcp-session-id') ?? $_GET['session_id'] ?? null;
         if ($requiresession && $sessionid === null) {
-            return $this->error('Missing required MCP-Session-Id header.');
+            return $this->error('Missing required MCP-Session-Id header or session_id query parameter.');
         }
 
         if ($sessionid !== null && !$this->is_valid_session_id($sessionid)) {

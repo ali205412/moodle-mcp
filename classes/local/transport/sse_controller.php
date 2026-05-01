@@ -82,11 +82,23 @@ class sse_controller extends server {
             $this->authenticate_user();
             $this->release_transport_session();
 
+            $sessionid = $this->transportrequest['sessionid'];
+            if ($sessionid === null) {
+                $sessionid = $this->create_transport_session();
+                $this->transportrequest['sessionid'] = $sessionid;
+            }
+
             if (!$this->load_transport_session_or_respond((string)$this->transportrequest['sessionid'])) {
                 return;
             }
 
             $this->emit_sse_headers();
+
+            $endpointurl = (new \moodle_url('/webservice/mcp/server.php', ['session_id' => $sessionid]))->out(false);
+            $this->emit("event: endpoint\n");
+            $this->emit("data: {$endpointurl}\n\n");
+            $this->flush();
+
             $this->stream_events();
         } catch (\Throwable $exception) {
             abort_all_db_transactions();
@@ -115,6 +127,29 @@ class sse_controller extends server {
         }
 
         $this->set_status(200);
+    }
+
+    /**
+     * Prepare DELETE/GET style stateful requests without requiring a session ID upfront.
+     *
+     * @return bool
+     */
+    protected function prepare_stateful_request(): bool {
+        $this->emit_json_headers(false);
+        $this->token = $this->extract_token();
+        $this->publictoken = $this->token;
+        $this->transportrequest = $this->protocolheaders->validate($this->httpmethod, $this->rawheaders, null, false);
+
+        if ($this->transportrequest['ok']) {
+            return true;
+        }
+
+        $this->send_transport_error(
+            $this->transportrequest['status'],
+            $this->transportrequest['errorcode'],
+            $this->transportrequest['message']
+        );
+        return false;
     }
 
     /**
