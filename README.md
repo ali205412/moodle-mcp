@@ -368,7 +368,7 @@ If the plugin is mounted inside an installed Moodle test site, use that site's n
 
 GitHub Actions runs:
 
-- a PHPUnit matrix across `MOODLE_402_STABLE` to `MOODLE_405_STABLE`
+- a PHPUnit matrix for `MOODLE_405_STABLE`
 - both `mariadb` and `pgsql`
 - a `Quality (MOODLE_405_STABLE)` lane for static quality checks
 - a final `Branch Gate` job used by branch protection

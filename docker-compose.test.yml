@@ -57,7 +57,7 @@ services:
     environment:
       DB: pgsql
       DB_HOST: pgsql
-      MOODLE_BRANCH: ${MOODLE_BRANCH:-MOODLE_402_STABLE}
+      MOODLE_BRANCH: ${MOODLE_BRANCH:-MOODLE_405_STABLE}
       MOODLE_PLUGIN_CI_VERSION: ${MOODLE_PLUGIN_CI_VERSION:-^4}
       TEST_STEPS: ${TEST_STEPS:-phplint validate savepoints phpunit}
     volumes:

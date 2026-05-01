@@ -37,9 +37,14 @@ if (!empty($issuerid)) {
     $pageurl->param('issuerid', $issuerid);
 }
 
-if (!isloggedin() && !empty($issuerid) && is_enabled_auth('oauth2')) {
-    $bridge = new \webservice_mcp\local\auth\oauth_bridge();
-    $bridge->redirect_to_login($issuerid, $pageurl);
+if (!isloggedin() || isguestuser()) {
+    if (!empty($issuerid) && is_enabled_auth('oauth2')) {
+        $bridge = new \webservice_mcp\local\auth\oauth_bridge();
+        $bridge->redirect_to_login($issuerid, $pageurl);
+    } else {
+        $SESSION->wantsurl = $pageurl->out(false);
+        redirect(get_login_url());
+    }
 }
 
 require_login(0, false);

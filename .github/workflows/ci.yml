@@ -49,24 +49,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - moodle-branch: MOODLE_402_STABLE
-            database: mariadb
-            node-version: "20.20.2"
-          - moodle-branch: MOODLE_402_STABLE
-            database: pgsql
-            node-version: "20.20.2"
-          - moodle-branch: MOODLE_403_STABLE
-            database: mariadb
-            node-version: "22.11.0"
-          - moodle-branch: MOODLE_403_STABLE
-            database: pgsql
-            node-version: "22.11.0"
-          - moodle-branch: MOODLE_404_STABLE
-            database: mariadb
-            node-version: "22.11.0"
-          - moodle-branch: MOODLE_404_STABLE
-            database: pgsql
-            node-version: "22.11.0"
           - moodle-branch: MOODLE_405_STABLE
             database: mariadb
             node-version: "22.11.0"
