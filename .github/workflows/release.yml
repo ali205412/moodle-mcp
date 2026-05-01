@@ -2,21 +2,19 @@ name: Moodle Plugin Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to create, for example v0.6.0. Leave empty to use version.php."
-        required: false
-        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref_name || inputs.tag || github.run_id }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   release:
@@ -36,61 +34,51 @@ jobs:
 
       - name: Resolve release metadata
         id: meta
-        env:
-          INPUT_TAG: ${{ inputs.tag }}
-          REF_NAME: ${{ github.ref_name }}
         run: |
-          VERSION="$(
-            sed -n "s/^\$plugin->release = '\(.*\)';/\1/p" version.php | head -n1
-          )"
+          VERSION="$(sed -n "s/^\$plugin->release = '\(.*\)';/\1/p" version.php | head -n1)"
           if [ -z "${VERSION}" ]; then
-            VERSION="$(
-              sed -n "s/^\$plugin->version = \([0-9][0-9]*\);/\1/p" version.php | head -n1
-            )"
+            VERSION="$(sed -n "s/^\$plugin->version = \([0-9][0-9]*\);/\1/p" version.php | head -n1)"
           fi
           if [ -z "${VERSION}" ]; then
             echo "Could not determine plugin version from version.php" >&2
             exit 1
           fi
-          TAG="${INPUT_TAG:-${REF_NAME}}"
-          if [ -z "${TAG}" ]; then
-            TAG="v${VERSION}"
-          fi
-          EXPECTED_TAG="v${VERSION}"
-          if [ "${TAG}" != "${EXPECTED_TAG}" ]; then
-            echo "Tag ${TAG} does not match version.php release ${VERSION}" >&2
-            exit 1
-          fi
+          TAG="v${VERSION}"
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
 
-      - name: Create and push tag for manual releases
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create and push tag
+        if: steps.meta.outputs.exists == 'false'
         env:
           TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
-            echo "Tag ${TAG} already exists on origin."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag "${TAG}"
-            git push origin "${TAG}"
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${TAG}"
+          git push origin "${TAG}"
 
       - name: Build Moodle plugin package
+        if: steps.meta.outputs.exists == 'false'
         id: package
         run: |
           PACKAGE_PATH="$(bash scripts/package-release.sh)"
           echo "package=${PACKAGE_PATH}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload packaged artifact
+        if: steps.meta.outputs.exists == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: webservice_mcp-${{ steps.meta.outputs.version }}
           path: ${{ steps.package.outputs.package }}
 
       - name: Publish GitHub release
+        if: steps.meta.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}

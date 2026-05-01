@@ -18,6 +18,7 @@ concurrency:
 env:
   PHP_VERSION: "8.2"
   MOODLE_PLUGIN_CI_VERSION: "^4"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   phpunit:
