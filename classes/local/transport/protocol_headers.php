@@ -147,6 +147,7 @@ class protocol_headers {
             }
         }
 
+        $bodyname = $this->request_target_name($request);
         $mcpname = $this->header_value($headers, 'mcp-name') ?? $bodyname;
         $requiresname = in_array($mcpmethod, ['tools/call', 'resources/read', 'prompts/get'], true);
         

@@ -473,7 +473,7 @@ class server extends webservice_base_server {
      * @param Exception $ex
      * @return void
      */
-    protected function log_exception_for_debug(Exception $ex): void {
+    protected function log_exception_for_debug(\Throwable $ex): void {
         $info = get_exception_info($ex);
         $message = 'MCP exception handler: ' . $info->message .
             ' Debug: ' . ($info->debuginfo ?? '') . "\n" .
