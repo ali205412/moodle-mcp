@@ -136,7 +136,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The 800+ raw Moodle API functions are hidden from `tools/list` to prevent context exhaustion, replaced by a dynamic Search/Execute API discovery wrapper.
   3. Claude can read user-scoped context from `moodle://user/memory` and write back to it using a dedicated memory tool.
   4. Claude can retrieve specialized prompting instructions via MCP `prompts/get`.
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 10-01-PLAN.md — Core Database & Memory Infrastructure
+- [ ] 10-02-PLAN.md — Activity Authoring & Reporting Services
+- [ ] 10-03-PLAN.md — Tool Discovery Engine
+- [ ] 10-04-PLAN.md — Protocol Routing & Manager Wiring
 
 ## Progress
 
@@ -154,4 +158,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 7. Operator Workflows & Authoring Gaps | 3/3 | Complete    | 2026-04-21 |
 | 8. Compatibility, Audit & Release Hardening | 3/3 | Complete    | 2026-04-21 |
 | 9. Full Coverage & UI Parity | 3/3 | Complete    | 2026-04-22 |
-| 10. Activity Authoring & Protocol Expansion | 0/0 | Planned | |
+| 10. Activity Authoring & Protocol Expansion | 0/4 | Planned | |
