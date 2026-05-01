@@ -470,7 +470,7 @@ class server extends webservice_base_server {
     /**
      * Log rich exception information when debugging is enabled.
      *
-     * @param Exception $ex
+     * @param \Throwable $ex
      * @return void
      */
     protected function log_exception_for_debug(\Throwable $ex): void {
