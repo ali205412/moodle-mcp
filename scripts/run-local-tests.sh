@@ -15,7 +15,7 @@ wait_for_service_health() {
     local status=""
 
     for _ in $(seq 1 60); do
-        container_id="$(docker compose -f "${COMPOSE_FILE}" --profile pgsql ps -q "${service}")"
+        container_id="$(docker compose -f "${COMPOSE_FILE}" ps -q "${service}")"
         if [[ -n "${container_id}" ]]; then
             status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_id}")"
             if [[ "${status}" == "healthy" ]]; then
@@ -46,12 +46,12 @@ case "${DATABASE}" in
     mariadb)
         docker compose -f "${COMPOSE_FILE}" up -d mariadb
         wait_for_service_health mariadb
-        docker compose -f "${COMPOSE_FILE}" run --build --rm --no-deps plugin-ci
+        docker compose -f "${COMPOSE_FILE}" run --rm --no-deps plugin-ci
         ;;
     pgsql|postgres|postgresql)
         docker compose -f "${COMPOSE_FILE}" --profile pgsql up -d pgsql
         wait_for_service_health pgsql
-        docker compose -f "${COMPOSE_FILE}" --profile pgsql run --build --rm --no-deps plugin-ci-pgsql
+        docker compose -f "${COMPOSE_FILE}" --profile pgsql run --rm --no-deps plugin-ci-pgsql
         ;;
     *)
         echo "Usage: bash scripts/run-local-tests.sh [mariadb|pgsql]" >&2

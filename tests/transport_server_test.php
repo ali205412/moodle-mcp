@@ -111,18 +111,12 @@ final class transport_server_test extends advanced_testcase {
     /**
      * Test Mcp-Method is required on POST transport requests.
      */
-    public function test_protocol_headers_require_mcp_method_for_post_requests(): void {
+    public function test_protocol_headers_require_mcp_method_or_jsonrpc_method_for_post_requests(): void {
         $this->resetAfterTest(true);
 
         $headers = new protocol_headers();
-        $request = new request([
-            'jsonrpc' => '2.0',
-            'method' => 'initialize',
-            'id' => 1,
-            'params' => [],
-        ]);
 
-        $result = $headers->validate('POST', [], $request);
+        $result = $headers->validate('POST', [], null);
 
         $this->assertFalse($result['ok']);
         $this->assertStringContainsString('Mcp-Method', $result['message']);
