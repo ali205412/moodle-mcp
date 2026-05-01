@@ -341,10 +341,10 @@ final class transport_server_test extends advanced_testcase {
         $payload = json_decode($server->capturedbody, true);
 
         $this->assertSame(200, $server->capturedstatus);
-        $this->assertNotEmpty($payload['result']['audit']['id']);
+        $this->assertNotEmpty($payload['audit']['id']);
         $this->assertTrue($payload['result']['structuredContent']['result']['status']);
         $this->assertCount(2, $payload['result']['structuredContent']['result']['sections']);
-        $this->assertTrue($DB->record_exists('webservice_mcp_audit', ['auditid' => $payload['result']['audit']['id']]));
+        $this->assertTrue($DB->record_exists('webservice_mcp_audit', ['auditid' => $payload['audit']['id']]));
     }
 
     /**
