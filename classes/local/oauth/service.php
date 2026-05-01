@@ -497,6 +497,11 @@ class service {
      */
     public function read_client_credentials_from_request(): array {
         $authorization = $this->read_headers()['authorization'] ?? '';
+        
+        if ($authorization === '') {
+            $authorization = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        }
+
         if (stripos($authorization, 'Basic ') === 0) {
             $decoded = base64_decode(substr($authorization, 6), true);
             if ($decoded === false || !str_contains($decoded, ':')) {
