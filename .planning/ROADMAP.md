@@ -21,7 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 7: Operator Workflows & Authoring Gaps** - Admin and course-authoring actions, including priority wrapper coverage gaps. (completed 2026-04-21)
 - [x] **Phase 8: Compatibility, Audit & Release Hardening** - Cross-version support, performance safeguards, auditability, and end-to-end verification. (completed 2026-04-21)
 - [x] **Phase 9: Full Coverage & UI Parity** - Question bank, gradebook, and badge parity wrappers plus explicit parity audit coverage. (completed 2026-04-22)
-- [ ] **Phase 10: Activity Authoring & Protocol Expansion** - Internal class parity wrappers, tool discovery engine, and MCP resources/prompts for persistent knowledgebase memory.
+- [x] **Phase 10: Activity Authoring & Protocol Expansion** - Internal class parity wrappers, tool discovery engine, and MCP resources/prompts for persistent knowledgebase memory. (completed 2026-05-01)
 
 ## Phase Details
 
@@ -137,10 +137,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Claude can read user-scoped context from `moodle://user/memory` and write back to it using a dedicated memory tool.
   4. Claude can retrieve specialized prompting instructions via MCP `prompts/get`.
 **Plans**: 4 plans
-- [ ] 10-01-PLAN.md — Core Database & Memory Infrastructure
-- [ ] 10-02-PLAN.md — Activity Authoring & Reporting Services
-- [ ] 10-03-PLAN.md — Tool Discovery Engine
-- [ ] 10-04-PLAN.md — Protocol Routing & Manager Wiring
+- [x] 10-01-PLAN.md — Core Database & Memory Infrastructure
+- [x] 10-02-PLAN.md — Activity Authoring & Reporting Services
+- [x] 10-03-PLAN.md — Tool Discovery Engine
+- [x] 10-04-PLAN.md — Protocol Routing & Manager Wiring
 
 ## Progress
 
@@ -158,4 +158,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 7. Operator Workflows & Authoring Gaps | 3/3 | Complete    | 2026-04-21 |
 | 8. Compatibility, Audit & Release Hardening | 3/3 | Complete    | 2026-04-21 |
 | 9. Full Coverage & UI Parity | 3/3 | Complete    | 2026-04-22 |
-| 10. Activity Authoring & Protocol Expansion | 0/4 | Planned | |
+| 10. Activity Authoring & Protocol Expansion | 4/4 | Complete    | 2026-05-01 |
