@@ -465,6 +465,133 @@ class server extends legacy_server {
     }
 
     /**
+     * Send resources/list response.
+     */
+    protected function send_resources_list_response(): void {
+        global $USER;
+        $memoryservice = new \webservice_mcp\local\wrapper\memory_service();
+        $memories = $memoryservice->read_memories();
+        
+        $resources = [];
+        foreach ($memories as $memory) {
+            $resources[] = [
+                'uri' => "memory://{$memory['id']}",
+                'name' => "User Memory {$memory['id']}",
+                'mimeType' => 'text/plain',
+            ];
+        }
+        
+        $payload = [
+            'jsonrpc' => $this->mcprequest->jsonrpc,
+            'id' => $this->mcprequest->id,
+            'result' => [
+                'resources' => $resources,
+            ],
+        ];
+
+        $this->set_status(200);
+        $this->record_transport_event((string)$this->transportrequest['sessionid'], $payload);
+        $this->emit($this->safe_json_encode($payload));
+    }
+
+    /**
+     * Send resources/read response.
+     */
+    protected function send_resources_read_response(): void {
+        global $USER;
+        $uri = $this->mcprequest->params->uri ?? '';
+        
+        if (!preg_match('#^memory://(\d+)$#', $uri, $matches)) {
+            $this->send_transport_error(200, -32602, 'Invalid resource URI', $this->mcprequest->id);
+            return;
+        }
+        
+        $id = (int)$matches[1];
+        $memoryservice = new \webservice_mcp\local\wrapper\memory_service();
+        
+        try {
+            $memory = $memoryservice->read_memory_by_id($id);
+            
+            $payload = [
+                'jsonrpc' => $this->mcprequest->jsonrpc,
+                'id' => $this->mcprequest->id,
+                'result' => [
+                    'contents' => [
+                        [
+                            'uri' => $uri,
+                            'mimeType' => 'text/plain',
+                            'text' => $memory['content'],
+                        ],
+                    ],
+                ],
+            ];
+            
+            $this->set_status(200);
+            $this->record_transport_event((string)$this->transportrequest['sessionid'], $payload);
+            $this->emit($this->safe_json_encode($payload));
+            
+        } catch (\Throwable $e) {
+            $this->send_transport_error(200, -32602, 'Resource not found or unauthorized', $this->mcprequest->id);
+        }
+    }
+
+    /**
+     * Send prompts/list response.
+     */
+    protected function send_prompts_list_response(): void {
+        $payload = [
+            'jsonrpc' => $this->mcprequest->jsonrpc,
+            'id' => $this->mcprequest->id,
+            'result' => [
+                'prompts' => [
+                    [
+                        'name' => 'system_guidance',
+                        'description' => 'Specialized instructions for MCP Moodle integrations.',
+                        'arguments' => []
+                    ]
+                ],
+            ],
+        ];
+        
+        $this->set_status(200);
+        $this->record_transport_event((string)$this->transportrequest['sessionid'], $payload);
+        $this->emit($this->safe_json_encode($payload));
+    }
+
+    /**
+     * Send prompts/get response.
+     */
+    protected function send_prompts_get_response(): void {
+        $name = $this->mcprequest->params->name ?? '';
+        
+        if ($name !== 'system_guidance') {
+            $this->send_transport_error(200, -32602, 'Prompt not found', $this->mcprequest->id);
+            return;
+        }
+        
+        $payload = [
+            'jsonrpc' => $this->mcprequest->jsonrpc,
+            'id' => $this->mcprequest->id,
+            'result' => [
+                'description' => 'Specialized instructions for MCP Moodle integrations.',
+                'messages' => [
+                    [
+                        'role' => 'user',
+                        'content' => [
+                            'type' => 'text',
+                            'text' => 'You are connected to Moodle via MCP. Use provided tools cautiously.'
+                        ]
+                    ]
+                ],
+            ],
+        ];
+        
+        $this->set_status(200);
+        $this->record_transport_event((string)$this->transportrequest['sessionid'], $payload);
+        $this->emit($this->safe_json_encode($payload));
+    }
+
+    /**
      * Send a successful tools/call response and store it for replay.
      *
      * @return void
@@ -691,6 +818,34 @@ class server extends legacy_server {
                     return;
                 }
                 $this->send_tools_list_response();
+                return;
+
+            case 'resources/list':
+                if (!$this->ensure_oauth_scope(false)) {
+                    return;
+                }
+                $this->send_resources_list_response();
+                return;
+
+            case 'resources/read':
+                if (!$this->ensure_oauth_scope(false)) {
+                    return;
+                }
+                $this->send_resources_read_response();
+                return;
+
+            case 'prompts/list':
+                if (!$this->ensure_oauth_scope(false)) {
+                    return;
+                }
+                $this->send_prompts_list_response();
+                return;
+
+            case 'prompts/get':
+                if (!$this->ensure_oauth_scope(false)) {
+                    return;
+                }
+                $this->send_prompts_get_response();
                 return;
 
             case 'initialize':

@@ -46,6 +46,15 @@ class manager {
     /** @var badge_service */
     private badge_service $badgeservice;
 
+    /** @var memory_service */
+    private memory_service $memoryservice;
+
+    /** @var activity_service */
+    private activity_service $activityservice;
+
+    /** @var discovery_service */
+    private discovery_service $discoveryservice;
+
     /**
      * Constructor.
      *
@@ -55,6 +64,9 @@ class manager {
      * @param question_bank_service|null $questionbankservice Optional question-bank service.
      * @param gradebook_service|null $gradebookservice Optional gradebook service.
      * @param badge_service|null $badgeservice Optional badge service.
+     * @param memory_service|null $memoryservice Optional memory service.
+     * @param activity_service|null $activityservice Optional activity service.
+     * @param discovery_service|null $discoveryservice Optional discovery service.
      */
     public function __construct(
         array $definitions = [],
@@ -62,13 +74,19 @@ class manager {
         ?course_authoring_service $courseauthoringservice = null,
         ?question_bank_service $questionbankservice = null,
         ?gradebook_service $gradebookservice = null,
-        ?badge_service $badgeservice = null
+        ?badge_service $badgeservice = null,
+        ?memory_service $memoryservice = null,
+        ?activity_service $activityservice = null,
+        ?discovery_service $discoveryservice = null
     ) {
         $this->definitions = $includedefaults ? array_merge(self::default_definitions(), $definitions) : $definitions;
         $this->courseauthoringservice = $courseauthoringservice ?? new course_authoring_service();
         $this->questionbankservice = $questionbankservice ?? new question_bank_service();
         $this->gradebookservice = $gradebookservice ?? new gradebook_service();
         $this->badgeservice = $badgeservice ?? new badge_service();
+        $this->memoryservice = $memoryservice ?? new memory_service();
+        $this->activityservice = $activityservice ?? new activity_service();
+        $this->discoveryservice = $discoveryservice ?? new discovery_service();
     }
 
     /**
@@ -312,6 +330,26 @@ class manager {
                 (int)($arguments['badgeid'] ?? 0),
                 (int)($arguments['recipientid'] ?? 0),
                 isset($arguments['issuerroleid']) ? (int)$arguments['issuerroleid'] : null
+            ),
+            'wrapper_memory_write' => $this->memoryservice->write_memory(
+                (string)($arguments['content'] ?? '')
+            ),
+            'wrapper_course_add_module' => $this->activityservice->add_module(
+                (int)($arguments['courseid'] ?? 0),
+                (string)($arguments['modulename'] ?? ''),
+                (string)($arguments['name'] ?? ''),
+                is_array($arguments['options'] ?? null) ? $arguments['options'] : []
+            ),
+            'wrapper_module_read_data' => $this->activityservice->read_module_data(
+                (int)($arguments['cmid'] ?? 0),
+                (string)($arguments['action'] ?? '')
+            ),
+            'wrapper_moodle_api_search' => $this->discoveryservice->search_api(
+                (string)($arguments['query'] ?? '')
+            ),
+            'wrapper_moodle_api_execute' => $this->discoveryservice->execute_api(
+                (string)($arguments['functionname'] ?? ''),
+                is_array($arguments['params'] ?? null) ? $arguments['params'] : []
             ),
             default => throw new \moodle_exception('invalidparameter'),
         };
@@ -1172,6 +1210,112 @@ class manager {
                         'badgeid' => ['type' => 'number'],
                         'recipientid' => ['type' => 'number'],
                         'revoked' => ['type' => 'boolean'],
+                    ],
+                ],
+            ),
+            new definition(
+                'wrapper_memory_write',
+                'webservice_mcp',
+                'operator',
+                'Write persistent memory scoped to the current user.',
+                [],
+                [
+                    'type' => 'object',
+                    'properties' => [
+                        'content' => ['type' => 'string'],
+                    ],
+                    'required' => ['content'],
+                ],
+                [
+                    'type' => 'object',
+                    'properties' => [
+                        'id' => ['type' => 'number'],
+                        'userid' => ['type' => 'number'],
+                        'content' => ['type' => 'string'],
+                        'timecreated' => ['type' => 'number'],
+                    ],
+                ],
+            ),
+            new definition(
+                'wrapper_course_add_module',
+                'webservice_mcp',
+                'operator',
+                'Add an activity module to a course.',
+                ['moodle/course:manageactivities'],
+                [
+                    'type' => 'object',
+                    'properties' => [
+                        'courseid' => ['type' => 'number'],
+                        'modulename' => ['type' => 'string'],
+                        'name' => ['type' => 'string'],
+                        'options' => ['type' => 'object'],
+                    ],
+                    'required' => ['courseid', 'modulename', 'name'],
+                ],
+                [
+                    'type' => 'object',
+                    'properties' => [
+                        'coursemodule' => ['type' => 'number'],
+                    ],
+                ],
+            ),
+            new definition(
+                'wrapper_module_read_data',
+                'webservice_mcp',
+                'operator',
+                'Read structural data from a module.',
+                [],
+                [
+                    'type' => 'object',
+                    'properties' => [
+                        'cmid' => ['type' => 'number'],
+                        'action' => ['type' => 'string'],
+                    ],
+                    'required' => ['cmid', 'action'],
+                ],
+                [
+                    'type' => 'array',
+                    'items' => ['type' => 'object'],
+                ],
+            ),
+            new definition(
+                'wrapper_moodle_api_search',
+                'webservice_mcp',
+                'operator',
+                'Search for Moodle core API functions.',
+                [],
+                [
+                    'type' => 'object',
+                    'properties' => [
+                        'query' => ['type' => 'string'],
+                    ],
+                    'required' => ['query'],
+                ],
+                [
+                    'type' => 'array',
+                    'items' => ['type' => 'object'],
+                ],
+            ),
+            new definition(
+                'wrapper_moodle_api_execute',
+                'webservice_mcp',
+                'operator',
+                'Dynamically execute a Moodle core API function.',
+                [],
+                [
+                    'type' => 'object',
+                    'properties' => [
+                        'functionname' => ['type' => 'string'],
+                        'params' => ['type' => 'object'],
+                    ],
+                    'required' => ['functionname', 'params'],
+                ],
+                [
+                    'type' => 'object',
+                    'properties' => [
+                        'status' => ['type' => 'string'],
+                        'data' => ['type' => 'object'],
+                        'message' => ['type' => 'string'],
                     ],
                 ],
             ),

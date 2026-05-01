@@ -476,4 +476,61 @@ final class transport_server_test extends advanced_testcase {
         $this->assertSame('mcp:write', $payload['error']['data']['requiredScope']);
         $this->assertStringContainsString('insufficient_scope', implode("\n", $server->capturedheaders));
     }
+
+    /**
+     * Test transport server handles resources/list.
+     */
+    public function test_transport_server_handles_resources_list(): void {
+        global $DB;
+        $this->resetAfterTest(true);
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+
+        $server = new testable_transport_server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
+        $server->set_mcprequest_for_test((object)[
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'resources/list',
+            'params' => new stdClass()
+        ]);
+        $server->set_transport_request_for_test([
+            'sessionid' => 'test-session',
+            'mcpmethod' => 'resources/list'
+        ]);
+        
+        $server->handle_transport_method_for_test();
+        $payload = json_decode($server->capturedbody, true);
+        
+        $this->assertSame(200, $server->capturedstatus);
+        $this->assertArrayHasKey('resources', $payload['result']);
+    }
+
+    /**
+     * Test transport server handles prompts/list.
+     */
+    public function test_transport_server_handles_prompts_list(): void {
+        global $DB;
+        $this->resetAfterTest(true);
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+
+        $server = new testable_transport_server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
+        $server->set_mcprequest_for_test((object)[
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'prompts/list',
+            'params' => new stdClass()
+        ]);
+        $server->set_transport_request_for_test([
+            'sessionid' => 'test-session',
+            'mcpmethod' => 'prompts/list'
+        ]);
+        
+        $server->handle_transport_method_for_test();
+        $payload = json_decode($server->capturedbody, true);
+        
+        $this->assertSame(200, $server->capturedstatus);
+        $this->assertArrayHasKey('prompts', $payload['result']);
+        $this->assertSame('system_guidance', $payload['result']['prompts'][0]['name']);
+    }
 }
