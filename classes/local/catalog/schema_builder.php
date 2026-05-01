@@ -41,7 +41,7 @@ class schema_builder {
      */
     public static function build(?external_description $description): array {
         if ($description === null) {
-            return ['type' => 'object', 'properties' => []];
+            return ['type' => 'object', 'properties' => new \stdClass()];
         }
 
         return self::generate($description);
@@ -70,7 +70,7 @@ class schema_builder {
         }
 
         if ($param instanceof external_single_structure) {
-            $schema['properties'] = [];
+            $properties = [];
             $requiredfields = [];
 
             foreach ($param->keys as $key => $subparam) {
@@ -79,8 +79,10 @@ class schema_builder {
                     $requiredfields[] = $key;
                 }
                 unset($subschema['_required']);
-                $schema['properties'][$key] = $subschema;
+                $properties[$key] = $subschema;
             }
+
+            $schema['properties'] = empty($properties) ? new \stdClass() : $properties;
 
             if ($requiredfields !== []) {
                 $schema['required'] = $requiredfields;
