@@ -385,7 +385,13 @@ class server extends legacy_server {
      * @return void
      */
     protected function send_initialize_response(): void {
-        $sessionid = $this->create_transport_session();
+        $sessionid = $this->transportrequest['sessionid'] ?? null;
+        if ($sessionid === null) {
+            $sessionid = $this->create_transport_session();
+        } else {
+            $this->transportsession = $this->sessionstore->get_session($sessionid);
+        }
+
         $protocolversion = $this->negotiate_protocol_version();
 
         $result = [
@@ -641,7 +647,8 @@ class server extends legacy_server {
             return false;
         }
 
-        if (($session['protocolversion'] ?? '') !== ($this->transportrequest['protocolversion'] ?? '')) {
+        $requestversion = $this->transportrequest['protocolversion'] ?? null;
+        if ($requestversion !== null && ($session['protocolversion'] ?? '') !== $requestversion) {
             $this->send_transport_error(
                 400,
                 -32001,
