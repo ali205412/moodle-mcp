@@ -118,8 +118,9 @@ final class connector_flow_test extends advanced_testcase {
             static fn(string $toolname): bool => !str_starts_with($toolname, 'wrapper_')
         );
 
-        $this->assertNotEmpty($harvestedtools);
+        $this->assertEmpty($harvestedtools);
         $this->assertNotEmpty($listpayload['result']['audit']['id']);
+        $this->assertArrayHasKey('wrapper_course_create_missing_sections', $tools);
 
         $server->reset_capture_for_test();
         $server->set_request_for_test(new request([

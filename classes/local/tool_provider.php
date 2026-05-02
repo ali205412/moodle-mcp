@@ -162,6 +162,9 @@ class tool_provider {
                     'count' => count($wrappertools),
                 ];
             }
+            // MCP mode: prevent context exhaustion by omitting raw native functions.
+            // The LLM must use wrapper_moodle_api_search and wrapper_moodle_api_execute instead.
+            $visibleentries = [];
         }
 
         $alltools = array_values(array_merge(
