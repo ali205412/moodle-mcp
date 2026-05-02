@@ -145,10 +145,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | COMP-02 | Phase 8 | Complete |
 | COMP-03 | Phase 8 | Complete |
 | COMP-04 | Phase 8 | Complete |
+| EDGE-01 | Phase 10 | Complete |
+| UX-01 | Phase 10 | Complete |
 
 **Coverage:**
 - v1 requirements: 36 total
-- Mapped to phases: 36
+- Mapped to phases: 38
 - Unmapped: 0 ✓
 
 ---

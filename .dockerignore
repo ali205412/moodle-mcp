@@ -1,0 +1,8 @@
+.git
+.github
+.planning
+node_modules
+tmp
+dist
+moodle
+moodledata
