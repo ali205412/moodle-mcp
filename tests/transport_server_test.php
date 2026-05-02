@@ -273,7 +273,6 @@ final class transport_server_test extends advanced_testcase {
         $this->assertArrayHasKey('nextCursor', $payload['result']);
         $this->assertArrayHasKey('coverage', $payload['result']);
         $this->assertArrayHasKey('groups', $payload['result']);
-        var_dump($payload);
         $this->assertNotEmpty($payload['result']['audit']['id']);
         $this->assertArrayHasKey('eligibility', $payload['result']['tools'][0]['x-moodle']);
         $this->assertArrayHasKey('risk', $payload['result']['tools'][0]['x-moodle']);
@@ -484,15 +483,16 @@ final class transport_server_test extends advanced_testcase {
         global $DB;
         $this->resetAfterTest(true);
         $user = $this->getDataGenerator()->create_user();
-        $this->setUser($user);
+        $this->setAdminUser();
+        \core_external\external_api::set_context_restriction(null);
 
         $server = new testable_transport_server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
-        $server->set_mcprequest_for_test((object)[
+        $server->set_request_for_test(new \webservice_mcp\local\request([
             'jsonrpc' => '2.0',
             'id' => 1,
             'method' => 'resources/list',
-            'params' => new stdClass()
-        ]);
+            'params' => []
+        ]));
         $server->set_transport_request_for_test([
             'sessionid' => 'test-session',
             'mcpmethod' => 'resources/list'
@@ -512,15 +512,16 @@ final class transport_server_test extends advanced_testcase {
         global $DB;
         $this->resetAfterTest(true);
         $user = $this->getDataGenerator()->create_user();
-        $this->setUser($user);
+        $this->setAdminUser();
+        \core_external\external_api::set_context_restriction(null);
 
         $server = new testable_transport_server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
-        $server->set_mcprequest_for_test((object)[
+        $server->set_request_for_test(new \webservice_mcp\local\request([
             'jsonrpc' => '2.0',
             'id' => 1,
             'method' => 'prompts/list',
-            'params' => new stdClass()
-        ]);
+            'params' => []
+        ]));
         $server->set_transport_request_for_test([
             'sessionid' => 'test-session',
             'mcpmethod' => 'prompts/list'

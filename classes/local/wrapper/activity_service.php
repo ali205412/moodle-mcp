@@ -62,9 +62,9 @@ class activity_service {
                 // Moodle assign class resides in mod/assign/locallib.php
                 $assign = new \assign($context, $cm, $course);
                 
-                if ($action === 'get_submissions' && method_exists($assign, 'get_submissions')) {
-                    $submissions = $assign->get_submissions();
-                    return array_map(fn($s) => (array)$s, $submissions ?: []);
+                if ($action === 'get_instance' && method_exists($assign, 'get_instance')) {
+                    $instance = $assign->get_instance();
+                    return [(array)$instance];
                 }
                 break;
             default:

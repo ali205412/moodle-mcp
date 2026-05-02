@@ -21,17 +21,20 @@ class activity_service_test extends advanced_testcase {
         
         $options = [
             'intro' => 'Test intro',
+            'introeditor' => ['text' => 'Test intro', 'format' => FORMAT_HTML, 'itemid' => 0],
             'introformat' => FORMAT_HTML,
+            'externalurl' => 'https://moodle.org',
+            'display' => 0,
             'section' => 1,
             'visible' => 1
         ];
 
-        $module = $service->add_module($course->id, 'assign', 'Test Assignment', $options);
+        $module = $service->add_module($course->id, 'url', 'Test URL', $options);
         
         $this->assertArrayHasKey('coursemodule', $module);
         
-        $cm = get_coursemodule_from_id('assign', $module['coursemodule'], 0, false, MUST_EXIST);
-        $this->assertEquals('Test Assignment', $cm->name);
+        $cm = get_coursemodule_from_id('url', $module['coursemodule'], 0, false, MUST_EXIST);
+        $this->assertEquals('Test URL', $cm->name);
     }
 
     public function test_wrapper_module_read_data_returns_structured_data(): void {
@@ -48,7 +51,7 @@ class activity_service_test extends advanced_testcase {
         $cm = get_coursemodule_from_instance('assign', $assign->id, $course->id);
         
         $service = new activity_service();
-        $data = $service->read_module_data($cm->id, 'get_submissions');
+        $data = $service->read_module_data($cm->id, 'get_instance');
         
         $this->assertIsArray($data);
     }
