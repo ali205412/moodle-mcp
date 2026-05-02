@@ -157,6 +157,15 @@ final class testable_transport_server extends transport_server {
     }
 
     /**
+     * Invoke the protected transport method execution helper.
+     *
+     * @return void
+     */
+    public function handle_transport_method_for_test(): void {
+        $this->handle_transport_method();
+    }
+
+    /**
      * Invoke protected error generation for assertions.
      *
      * @param \Throwable $exception Exception to encode.
