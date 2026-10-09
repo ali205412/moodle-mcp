@@ -120,3 +120,17 @@ harmlessly; drop them if wanted.
   conversion, cached after), short links (95 chars), Explorer renders courses in the MCP Apps reference host.
 - Pre-release checks for 0.9.3: 305/305 PHPUnit on 4.2/MariaDB and 4.5/PostgreSQL (all CI steps), 82/82 live HTTP checks.
 - Test key `deploy-smoke-091` revoked, local CSV shredded, local proxy/host/Chrome stopped.
+
+## MCP log audit + 0.9.4 deploy (2026-10-09 evening)
+
+- Audit scope: plugin audit table (all time), Moodle event log, nginx access/error logs and PHP-FPM log since the 0.9.0 deploy.
+- Production data fixes (Moodle API, before-state in `/var/backups/webservice_mcp-20261009-1857/create_password-prefs-before.tsv`):
+  removed `create_password` preference from users 2503/2611 (invalid emails `@Caprioledevelopments`, `@lah`), which made
+  core `send_new_user_passwords_task` regenerate their passwords every minute since 2024-08 (~20k events/week);
+  revoked orphan OAuth family `92887fd0…` left by mofeed's failed concurrent refresh at 17:28:50.
+- 0.9.4 (2026101010, commit `1e85ee1`), package sha256 `371ce5e24e79921c…`, maintenance 8 s, backup
+  `/var/backups/webservice_mcp-20261009-2008`. Pre-release: 313/313 PHPUnit on 4.2/MariaDB and 4.5/PostgreSQL (no skips),
+  phpcs clean, 82/82 live checks, fingerprint unchanged.
+- Verified on production: legacy-token refresh fix in place; explorer `courseid` alone opens the course; drafts listing;
+  explained not-found; gateway validation reasons; wrapper input explanations; audit `detail` stored; rejected token
+  audited (`invalid_token`); smoke 21/21; file checks all pass. Test keys revoked, CSV shredded.
