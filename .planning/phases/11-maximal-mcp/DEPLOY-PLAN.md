@@ -107,3 +107,16 @@ harmlessly; drop them if wanted.
   snapshot in `/var/backups/webservice_mcp-20261009-1642/moodle-perms.txt`), config.php 640, plugin `uploadmaxbytes` = 16 GiB (FPM limit is 16G; the
   "2 MB" seen earlier was the CLI php.ini only). Config backups: `moodle.conf.bak`, `config.php.bak`, `php-cli.ini.bak`.
 - Open, not changed: Moodle cron runs as **root** (root crontab), 16 overlapping cron processes at the time.
+
+## Deploy record: 0.9.1 to 0.9.3 (2026-10-09)
+
+- 0.9.1 (2026101007, commit `0f52eae`): async exports, DB rate limit, admin key labels. Backup `/var/backups/webservice_mcp-20261009-1731`.
+- 0.9.2 (2026101008, commit `2bf32ca`): Office/PDF text extraction, page images, short links, Explorer fix, cold-load
+  library loader. Maintenance 11 s. Backup `/var/backups/webservice_mcp-20261009-1847`. Server: poppler-utils installed;
+  LibreOffice headless build swapped for regular components (headless crashed on conversion).
+- 0.9.3 (2026101009, commit `fc8d983`): retry document conversions core had cached as failed. Package sha256 `6d00e6b74fa17663...`.
+  Maintenance 7 s. Backup `/var/backups/webservice_mcp-20261009-1857` (row presence verified per table).
+- Verified on production: Y1 English T3 pptx/docx/pdf text, pdf page image (0.4 s), pptx slide image (11.6 s first
+  conversion, cached after), short links (95 chars), Explorer renders courses in the MCP Apps reference host.
+- Pre-release checks for 0.9.3: 305/305 PHPUnit on 4.2/MariaDB and 4.5/PostgreSQL (all CI steps), 82/82 live HTTP checks.
+- Test key `deploy-smoke-091` revoked, local CSV shredded, local proxy/host/Chrome stopped.
