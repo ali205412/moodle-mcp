@@ -20,6 +20,7 @@ namespace webservice_mcp\local\oauth;
 
 use context;
 use context_system;
+use moodle_exception;
 use moodle_url;
 use stdClass;
 use webservice_mcp\local\auth\bootstrap_service;
@@ -27,7 +28,7 @@ use webservice_mcp\local\auth\connector_service_manager;
 use webservice_mcp\local\auth\credential_manager;
 
 /**
- * Moodle-native OAuth server helpers for Claude-compatible remote MCP auth.
+ * Moodle-native OAuth 2.1 authorization server for remote MCP clients.
  *
  * @package     webservice_mcp
  * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
@@ -36,14 +37,11 @@ use webservice_mcp\local\auth\credential_manager;
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class service {
-    /** OAuth client table name. */
-    private const CLIENT_TABLE = 'webservice_mcp_oauth_client';
+    /** RFC 7636 code_verifier / S256 code_challenge syntax. */
+    public const PKCE_PATTERN = '/^[A-Za-z0-9\-._~]{43,128}$/';
 
-    /** OAuth authorization-code table name. */
-    private const CODE_TABLE = 'webservice_mcp_oauth_code';
-
-    /** Authorization-code lifetime in seconds. */
-    private const AUTH_CODE_TTL = 600;
+    /** RFC 7523 JWT bearer grant type (Enterprise Managed Authorization identity assertions). */
+    public const GRANT_JWT_BEARER = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
 
     /** OAuth read scope. */
     public const SCOPE_READ = 'mcp:read';
@@ -54,8 +52,8 @@ class service {
     /** OAuth refresh scope. */
     public const SCOPE_OFFLINE = 'offline_access';
 
-    /** Supported OAuth token endpoint auth methods. */
-    private const TOKEN_AUTH_METHODS = ['none', 'client_secret_basic', 'client_secret_post'];
+    /** Scope registered for clients that do not ask for one. */
+    public const REGISTRATION_DEFAULT_SCOPE = 'mcp:read mcp:write offline_access';
 
     /** @var credential_manager */
     private credential_manager $credentialmanager;
@@ -63,18 +61,48 @@ class service {
     /** @var connector_service_manager */
     private connector_service_manager $connectormanager;
 
+    /** @var client_registry */
+    private client_registry $clients;
+
+    /** @var jwt_bearer_grant|null Optional JWT bearer verifier override. */
+    private ?jwt_bearer_grant $jwtbearer;
+
     /**
      * Constructor.
      *
      * @param credential_manager|null $credentialmanager Optional credential manager override.
      * @param connector_service_manager|null $connectormanager Optional connector service manager override.
+     * @param client_registry|null $clients Optional client registry override.
+     * @param jwt_bearer_grant|null $jwtbearer Optional JWT bearer verifier override.
      */
     public function __construct(
         ?credential_manager $credentialmanager = null,
-        ?connector_service_manager $connectormanager = null
+        ?connector_service_manager $connectormanager = null,
+        ?client_registry $clients = null,
+        ?jwt_bearer_grant $jwtbearer = null
     ) {
         $this->credentialmanager = $credentialmanager ?? new credential_manager();
         $this->connectormanager = $connectormanager ?? new connector_service_manager();
+        $this->clients = $clients ?? new client_registry();
+        $this->jwtbearer = $jwtbearer;
+    }
+
+    /**
+     * Return the authorization-request handler (authorize endpoint logic).
+     *
+     * @return authorization
+     */
+    public function authorization(): authorization {
+        return new authorization($this, $this->clients, $this->connectormanager, $this->credentialmanager);
+    }
+
+    /**
+     * Whether Enterprise Managed Authorization (RFC 7523 identity assertions) is enabled.
+     *
+     * @return bool
+     */
+    public function ema_enabled(): bool {
+        return (bool)get_config('webservice_mcp', 'emaenabled');
     }
 
     /**
@@ -123,6 +151,24 @@ class service {
     }
 
     /**
+     * Return the RFC 7009 revocation endpoint URL.
+     *
+     * @return string
+     */
+    public function revocation_endpoint_url(): string {
+        return (new moodle_url('/webservice/mcp/oauth/revoke.php'))->out(false);
+    }
+
+    /**
+     * Return the (empty) JWKS URL advertised for OpenID discovery parsers.
+     *
+     * @return string
+     */
+    public function jwks_url(): string {
+        return (new moodle_url('/webservice/mcp/oauth/jwks.php'))->out(false);
+    }
+
+    /**
      * Return the resource-metadata URL used in Bearer challenges.
      *
      * @return string
@@ -132,25 +178,9 @@ class service {
     }
 
     /**
-     * Return the authorization-server metadata URL.
+     * Return the scope set MCP clients should request from the resource (used in Bearer challenges).
      *
-     * @return string
-     */
-    public function authorization_server_metadata_url(): string {
-        return (new moodle_url('/webservice/mcp/.well-known/oauth-authorization-server'))->out(false);
-    }
-
-    /**
-     * Return the OpenID configuration URL.
-     *
-     * @return string
-     */
-    public function openid_configuration_url(): string {
-        return (new moodle_url('/webservice/mcp/.well-known/openid-configuration'))->out(false);
-    }
-
-    /**
-     * Return the default scope set requested for MCP access.
+     * offline_access is deliberately absent: it is not a resource requirement.
      *
      * @return string
      */
@@ -159,7 +189,7 @@ class service {
     }
 
     /**
-     * Return the supported scopes.
+     * Return the scopes supported by the authorization server.
      *
      * @return array
      */
@@ -181,48 +211,15 @@ class service {
     }
 
     /**
-     * Return display labels for the supported scopes.
+     * Return human-readable labels for the supported scopes.
      *
      * @return array
      */
     public function scope_labels(): array {
         return [
-            self::SCOPE_READ => 'Read Moodle data and list available tools.',
-            self::SCOPE_WRITE => 'Create, update, and delete Moodle data through tools the user can access.',
-            self::SCOPE_OFFLINE => 'Stay connected without signing in again every session.',
-        ];
-    }
-
-    /**
-     * Build the protected-resource metadata document.
-     *
-     * @return array
-     */
-    public function build_protected_resource_metadata(): array {
-        return [
-            'resource' => $this->canonical_resource_uri(),
-            'authorization_servers' => [$this->issuer_url()],
-            'scopes_supported' => $this->supported_scopes(),
-            'bearer_methods_supported' => ['header'],
-        ];
-    }
-
-    /**
-     * Build the authorization-server metadata document.
-     *
-     * @return array
-     */
-    public function build_authorization_server_metadata(): array {
-        return [
-            'issuer' => $this->issuer_url(),
-            'authorization_endpoint' => $this->authorization_endpoint_url(),
-            'token_endpoint' => $this->token_endpoint_url(),
-            'registration_endpoint' => $this->registration_endpoint_url(),
-            'response_types_supported' => ['code'],
-            'grant_types_supported' => ['authorization_code', 'refresh_token'],
-            'token_endpoint_auth_methods_supported' => self::TOKEN_AUTH_METHODS,
-            'code_challenge_methods_supported' => ['S256'],
-            'scopes_supported' => $this->supported_scopes(),
+            self::SCOPE_READ => get_string('oauth:scope_read', 'webservice_mcp'),
+            self::SCOPE_WRITE => get_string('oauth:scope_write', 'webservice_mcp'),
+            self::SCOPE_OFFLINE => get_string('oauth:scope_offline', 'webservice_mcp'),
         ];
     }
 
@@ -241,7 +238,8 @@ class service {
         ];
 
         if ($scope !== null && trim($scope) !== '') {
-            $parts[] = 'scope="' . self::escape_header_value(self::normalize_scope_string($scope, $this->default_scope_string())) . '"';
+            $scope = self::normalize_scope_string($scope, $this->default_scope_string());
+            $parts[] = 'scope="' . self::escape_header_value($scope) . '"';
         }
 
         if ($error !== null && trim($error) !== '') {
@@ -256,215 +254,27 @@ class service {
     }
 
     /**
-     * Register an OAuth client dynamically.
+     * Register an OAuth client dynamically, or pre-register one for an administrator.
      *
      * @param array $metadata Registration metadata.
+     * @param bool $isdynamic False for administrator pre-registration (client is treated as verified).
      * @return array
      */
-    public function register_dynamic_client(array $metadata): array {
-        global $DB;
+    public function register_dynamic_client(array $metadata, bool $isdynamic = true): array {
+        $scope = self::normalize_scope_string((string)($metadata['scope'] ?? ''), self::REGISTRATION_DEFAULT_SCOPE);
+        $this->assert_supported_scope_set($scope);
 
-        $redirecturis = $metadata['redirect_uris'] ?? null;
-        if (!is_array($redirecturis) || $redirecturis === []) {
-            throw new exception('invalid_client_metadata', 400, 'At least one redirect URI is required.');
-        }
-
-        $normalizedredirects = [];
-        foreach ($redirecturis as $redirecturi) {
-            $normalizedredirects[] = self::normalize_redirect_uri((string)$redirecturi);
-        }
-
-        $tokenauthmethod = (string)($metadata['token_endpoint_auth_method'] ?? 'none');
-        if (!in_array($tokenauthmethod, self::TOKEN_AUTH_METHODS, true)) {
-            throw new exception('invalid_client_metadata', 400, 'Unsupported token endpoint auth method.');
-        }
-
-        $granttypes = $this->normalize_client_list(
-            $metadata['grant_types'] ?? ['authorization_code', 'refresh_token'],
-            ['authorization_code', 'refresh_token'],
-            'grant_types'
-        );
-        if (!in_array('authorization_code', $granttypes, true)) {
-            throw new exception('invalid_client_metadata', 400, 'authorization_code must be supported.');
-        }
-
-        $responsetypes = $this->normalize_client_list(
-            $metadata['response_types'] ?? ['code'],
-            ['code'],
-            'response_types'
-        );
-        if ($responsetypes !== ['code']) {
-            throw new exception('invalid_client_metadata', 400, 'Only the code response type is supported.');
-        }
-
-        $clientscope = self::normalize_scope_string(
-            (string)($metadata['scope'] ?? $this->default_scope_string()),
-            $this->default_scope_string()
-        );
-        $this->assert_supported_scope_set($clientscope);
-
-        $clientid = $this->generate_unique_client_id();
-        $plaintextsecret = null;
-        $storedsecret = null;
-        if ($tokenauthmethod !== 'none') {
-            $plaintextsecret = $this->generate_secret();
-            $storedsecret = password_hash($plaintextsecret, PASSWORD_DEFAULT);
-        }
-
-        $record = (object)[
-            'timecreated' => time(),
-            'timemodified' => time(),
-            'clientid' => $clientid,
-            'clientsecret' => $storedsecret,
-            'clientname' => substr(trim((string)($metadata['client_name'] ?? 'Claude')), 0, 255),
-            'redirecturis' => json_encode($normalizedredirects),
-            'scope' => $clientscope,
-            'granttypes' => json_encode($granttypes),
-            'responsetypes' => json_encode($responsetypes),
-            'tokenauthmethod' => $tokenauthmethod,
-            'isdynamic' => 1,
-            'revoked' => 0,
-        ];
-        $DB->insert_record(self::CLIENT_TABLE, $record);
-
-        $response = [
-            'client_id' => $clientid,
-            'client_id_issued_at' => $record->timecreated,
-            'client_name' => $record->clientname,
-            'redirect_uris' => $normalizedredirects,
-            'scope' => $clientscope,
-            'grant_types' => $granttypes,
-            'response_types' => $responsetypes,
-            'token_endpoint_auth_method' => $tokenauthmethod,
-            'client_secret_expires_at' => 0,
-        ];
-
-        if ($plaintextsecret !== null) {
-            $response['client_secret'] = $plaintextsecret;
-        }
-
-        return $response;
+        return $this->clients->register_client($metadata, self::REGISTRATION_DEFAULT_SCOPE, $scope, $isdynamic);
     }
 
     /**
-     * Validate an incoming authorize request and return normalized values.
+     * Throttle dynamic registrations per source IP.
      *
-     * @param array $params Raw request parameters.
-     * @return array
+     * @param string $ipaddress Remote address.
+     * @return void
      */
-    public function validate_authorization_request(array $params): array {
-        $responsetype = (string)($params['response_type'] ?? '');
-        if ($responsetype !== 'code') {
-            throw new exception('unsupported_response_type', 400, 'Only the authorization code flow is supported.');
-        }
-
-        $clientid = trim((string)($params['client_id'] ?? ''));
-        if ($clientid === '') {
-            throw new exception('invalid_request', 400, 'Missing client_id.');
-        }
-
-        $client = $this->get_client($clientid);
-        if ($client === null) {
-            throw new exception('invalid_client', 401, 'Unknown client.');
-        }
-
-        $redirecturi = trim((string)($params['redirect_uri'] ?? ''));
-        if ($redirecturi === '') {
-            if (count($client->redirecturis) !== 1) {
-                throw new exception('invalid_request', 400, 'redirect_uri is required.');
-            }
-            $redirecturi = $client->redirecturis[0];
-        } else {
-            $redirecturi = self::normalize_redirect_uri($redirecturi);
-        }
-
-        if (!in_array($redirecturi, $client->redirecturis, true)) {
-            throw new exception('invalid_request', 400, 'redirect_uri is not registered for this client.');
-        }
-
-        $scope = self::normalize_scope_string((string)($params['scope'] ?? $client->scope), $client->scope);
-        $this->assert_scope_subset($scope, $client->scope);
-
-        $codechallenge = trim((string)($params['code_challenge'] ?? ''));
-        if ($codechallenge === '') {
-            throw new exception('invalid_request', 400, 'code_challenge is required.');
-        }
-
-        $codechallengemethod = strtoupper(trim((string)($params['code_challenge_method'] ?? 'S256')));
-        if ($codechallengemethod !== 'S256') {
-            throw new exception('invalid_request', 400, 'Only S256 PKCE challenges are supported.');
-        }
-
-        $contextid = isset($params['contextid']) ? (int)$params['contextid'] : 0;
-
-        return [
-            'client' => $client,
-            'redirecturi' => $redirecturi,
-            'scope' => $scope,
-            'state' => isset($params['state']) ? (string)$params['state'] : null,
-            'resourceuri' => $this->validate_resource((string)($params['resource'] ?? '')),
-            'codechallenge' => $codechallenge,
-            'codechallengemethod' => $codechallengemethod,
-            'contextid' => $contextid,
-        ];
-    }
-
-    /**
-     * Ensure the currently logged-in user may authorize access in the selected context.
-     *
-     * @param int $contextid Requested context id, or 0 for system.
-     * @return context
-     */
-    public function require_authorization_context(int $contextid = 0): context {
-        $context = $contextid > 0 ? context::instance_by_id($contextid) : context_system::instance();
-        (new bootstrap_service())->require_bootstrap_access($context);
-        return $context;
-    }
-
-    /**
-     * Create an authorization code for the current user.
-     *
-     * @param int $userid Moodle user id.
-     * @param stdClass $client OAuth client.
-     * @param context $context Restricted context.
-     * @param string $redirecturi Redirect URI.
-     * @param string $scope Normalized scope set.
-     * @param string $resourceuri Normalized resource URI.
-     * @param string $codechallenge PKCE challenge.
-     * @param string $codechallengemethod PKCE challenge method.
-     * @return string
-     */
-    public function create_authorization_code(
-        int $userid,
-        stdClass $client,
-        context $context,
-        string $redirecturi,
-        string $scope,
-        string $resourceuri,
-        string $codechallenge,
-        string $codechallengemethod
-    ): string {
-        global $DB;
-
-        $record = (object)[
-            'timecreated' => time(),
-            'timemodified' => time(),
-            'expiresat' => time() + self::AUTH_CODE_TTL,
-            'userid' => $userid,
-            'clientid' => $client->clientid,
-            'code' => $this->generate_unique_authorization_code(),
-            'redirecturi' => $redirecturi,
-            'scope' => $scope,
-            'resourceuri' => $resourceuri,
-            'contextid' => $context->id,
-            'serviceidentifier' => $this->connectormanager->service_shortname(),
-            'codechallenge' => $codechallenge,
-            'codechallengemethod' => $codechallengemethod,
-            'used' => 0,
-        ];
-        $DB->insert_record(self::CODE_TABLE, $record);
-
-        return $record->code;
+    public function enforce_registration_rate_limit(string $ipaddress): void {
+        $this->clients->enforce_registration_rate_limit($ipaddress);
     }
 
     /**
@@ -483,11 +293,45 @@ class service {
 
         $client = $this->authenticate_client((string)$clientid, $clientsecret);
 
+        $issuer = new token_issuer($this, $this->credentialmanager, $this->connectormanager);
         return match ($granttype) {
-            'authorization_code' => $this->exchange_authorization_code($client, $params),
-            'refresh_token' => $this->refresh_access_token($client, $params),
+            'authorization_code' => $issuer->exchange_authorization_code($client, $params),
+            'refresh_token' => $issuer->refresh_access_token($client, $params),
+            self::GRANT_JWT_BEARER => $this->ema_enabled()
+                ? $issuer->issue_for_assertion($client, $params, $this->jwtbearer ?? new jwt_bearer_grant())
+                : throw new exception('unsupported_grant_type', 400, 'Unsupported grant_type.'),
             default => throw new exception('unsupported_grant_type', 400, 'Unsupported grant_type.'),
         };
+    }
+
+    /**
+     * Handle an RFC 7009 token revocation request.
+     *
+     * Unknown tokens and tokens of other clients are ignored, as the RFC allows.
+     *
+     * @param array $params Revocation request parameters.
+     * @param string|null $clientid Client id from the request.
+     * @param string|null $clientsecret Client secret from the request.
+     * @return void
+     */
+    public function revoke_token_request(array $params, ?string $clientid, ?string $clientsecret): void {
+        $client = $this->authenticate_client((string)$clientid, $clientsecret);
+
+        $token = trim((string)($params['token'] ?? ''));
+        if ($token === '') {
+            throw new exception('invalid_request', 400, 'token is required.');
+        }
+
+        $record = $this->credentialmanager->find_credential($token);
+        if (!$record || !hash_equals((string)$client->clientid, (string)($record->oauthclientid ?? ''))) {
+            return;
+        }
+
+        if ((int)$record->tokentype === credential_manager::TOKEN_TYPE_REFRESH && !empty($record->familyid)) {
+            $this->credentialmanager->revoke_family((string)$record->familyid, (int)$record->userid);
+            return;
+        }
+        $this->credentialmanager->revoke_credential_by_id((int)$record->id, (int)$record->userid);
     }
 
     /**
@@ -496,20 +340,17 @@ class service {
      * @return array
      */
     public function read_client_credentials_from_request(): array {
-        $authorization = $this->read_headers()['authorization'] ?? '';
-        
-        if ($authorization === '') {
-            $authorization = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
-        }
+        $authorization = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
 
         if (stripos($authorization, 'Basic ') === 0) {
-            $decoded = base64_decode(substr($authorization, 6), true);
+            $decoded = base64_decode(trim(substr($authorization, 6)), true);
             if ($decoded === false || !str_contains($decoded, ':')) {
                 throw new exception('invalid_client', 401, 'Malformed client credentials.');
             }
 
+            // RFC 6749 section 2.3.1: both parts are form-urlencoded before base64 encoding.
             [$clientid, $clientsecret] = explode(':', $decoded, 2);
-            return [$clientid, $clientsecret];
+            return [urldecode($clientid), urldecode($clientsecret)];
         }
 
         return [
@@ -519,13 +360,14 @@ class service {
     }
 
     /**
-     * Build a redirect URI carrying an authorization response.
+     * Build a redirect URI carrying an authorization response, including the RFC 9207 iss parameter.
      *
      * @param string $redirecturi Registered redirect URI.
      * @param array $params Query params to append.
      * @return string
      */
     public function build_redirect_uri(string $redirecturi, array $params): string {
+        $params['iss'] = $this->issuer_url();
         return (new moodle_url($redirecturi, $params))->out(false);
     }
 
@@ -562,8 +404,8 @@ class service {
         $scheme = strtolower((string)($parts['scheme'] ?? ''));
         $host = strtolower((string)($parts['host'] ?? ''));
 
-        if ($scheme !== 'https' && !self::is_loopback_host($host)) {
-            throw new exception('invalid_client_metadata', 400, 'Redirect URIs must use HTTPS or localhost.');
+        if ($scheme !== 'https' && !client_registry::is_loopback_host($host)) {
+            throw new exception('invalid_redirect_uri', 400, 'Redirect URIs must use HTTPS or localhost.');
         }
 
         return $normalized;
@@ -577,19 +419,31 @@ class service {
      * @return string
      */
     public static function normalize_scope_string(string $scope, string $fallback = ''): string {
-        $tokens = self::scope_tokens($scope !== '' ? $scope : $fallback);
+        $tokens = self::scope_tokens(trim($scope) !== '' ? $scope : $fallback);
 
         if (in_array(self::SCOPE_WRITE, $tokens, true) && !in_array(self::SCOPE_READ, $tokens, true)) {
             array_unshift($tokens, self::SCOPE_READ);
         }
 
-        if (in_array(self::SCOPE_OFFLINE, $tokens, true) &&
+        if (
+            in_array(self::SCOPE_OFFLINE, $tokens, true) &&
                 !in_array(self::SCOPE_READ, $tokens, true) &&
-                !in_array(self::SCOPE_WRITE, $tokens, true)) {
+                !in_array(self::SCOPE_WRITE, $tokens, true)
+        ) {
             array_unshift($tokens, self::SCOPE_READ);
         }
 
         return implode(' ', array_values(array_unique($tokens)));
+    }
+
+    /**
+     * Fetch an active client record by client id (database only, no metadata fetch).
+     *
+     * @param string $clientid OAuth client id.
+     * @return stdClass|null
+     */
+    public function get_client(string $clientid): ?stdClass {
+        return $this->clients->get_client($clientid);
     }
 
     /**
@@ -656,23 +510,12 @@ class service {
     }
 
     /**
-     * Determine whether the host is a localhost/loopback host.
-     *
-     * @param string $host Hostname or IP.
-     * @return bool
-     */
-    private static function is_loopback_host(string $host): bool {
-        $normalized = trim($host, '[]');
-        return in_array($normalized, ['localhost', '127.0.0.1', '::1'], true);
-    }
-
-    /**
      * Ensure the supplied resource URI targets this MCP server.
      *
      * @param string $resource Requested resource URI.
      * @return string
      */
-    private function validate_resource(string $resource): string {
+    public function validate_resource(string $resource): string {
         $normalized = trim($resource) === '' ? $this->canonical_resource_uri() : self::normalize_resource_uri($resource);
         if (!hash_equals($this->canonical_resource_uri(), $normalized)) {
             throw new exception('invalid_target', 400, 'resource must match the MCP transport URL.');
@@ -682,20 +525,7 @@ class service {
     }
 
     /**
-     * Fetch a client record by client id.
-     *
-     * @param string $clientid OAuth client id.
-     * @return stdClass|null
-     */
-    public function get_client(string $clientid): ?stdClass {
-        global $DB;
-
-        $record = $DB->get_record(self::CLIENT_TABLE, ['clientid' => $clientid, 'revoked' => 0]);
-        return $record ? $this->hydrate_client($record) : null;
-    }
-
-    /**
-     * Authenticate a client at the token endpoint.
+     * Authenticate a client at the token or revocation endpoint.
      *
      * @param string $clientid OAuth client id.
      * @param string|null $clientsecret OAuth client secret, if any.
@@ -707,7 +537,9 @@ class service {
             throw new exception('invalid_client', 401, 'Missing client credentials.');
         }
 
-        $client = $this->get_client($clientid);
+        // Database only: these endpoints are anonymous, so they must never fetch metadata documents or create clients.
+        // Metadata-document clients are stored when a signed-in user authorizes them.
+        $client = $this->clients->get_client($clientid);
         if ($client === null) {
             throw new exception('invalid_client', 401, 'Unknown client.');
         }
@@ -720,273 +552,18 @@ class service {
             return $client;
         }
 
-        if ($clientsecret === null || $clientsecret === '' ||
-                !password_verify($clientsecret, (string)$client->clientsecret)) {
+        // During a secret rotation overlap the previous secret is still accepted.
+        $valid = $clientsecret !== null && $clientsecret !== '' && (
+            password_verify($clientsecret, (string)$client->clientsecret) || (
+                !empty($client->previoussecret) && (int)$client->previoussecretexpires > time()
+                && password_verify($clientsecret, (string)$client->previoussecret)
+            )
+        );
+        if (!$valid) {
             throw new exception('invalid_client', 401, 'Invalid client credentials.');
         }
 
         return $client;
-    }
-
-    /**
-     * Exchange an authorization code for access and refresh tokens.
-     *
-     * @param stdClass $client OAuth client.
-     * @param array $params Token request params.
-     * @return array
-     */
-    private function exchange_authorization_code(stdClass $client, array $params): array {
-        if (!in_array('authorization_code', $client->granttypes, true)) {
-            throw new exception('unauthorized_client', 400, 'This client cannot use the authorization_code grant.');
-        }
-
-        $code = trim((string)($params['code'] ?? ''));
-        if ($code === '') {
-            throw new exception('invalid_request', 400, 'code is required.');
-        }
-
-        $redirecturi = trim((string)($params['redirect_uri'] ?? ''));
-        if ($redirecturi === '') {
-            throw new exception('invalid_request', 400, 'redirect_uri is required.');
-        }
-        $redirecturi = self::normalize_redirect_uri($redirecturi);
-
-        $codeverifier = trim((string)($params['code_verifier'] ?? ''));
-        if ($codeverifier === '') {
-            throw new exception('invalid_request', 400, 'code_verifier is required.');
-        }
-
-        $resourceuri = $this->validate_resource((string)($params['resource'] ?? ''));
-        $coderecord = $this->get_authorization_code($code, $client->clientid, $redirecturi, $resourceuri);
-        if ($coderecord === null) {
-            throw new exception('invalid_grant', 400, 'Authorization code is invalid or expired.');
-        }
-
-        if (!$this->verify_pkce($codeverifier, $coderecord->codechallenge, $coderecord->codechallengemethod)) {
-            throw new exception('invalid_grant', 400, 'PKCE verification failed.');
-        }
-
-        $this->mark_authorization_code_used((int)$coderecord->id);
-
-        return $this->issue_oauth_token_pair(
-            $client,
-            (int)$coderecord->userid,
-            context::instance_by_id((int)$coderecord->contextid),
-            (string)$coderecord->scope,
-            (string)$coderecord->resourceuri
-        );
-    }
-
-    /**
-     * Refresh an access token and rotate the refresh token.
-     *
-     * @param stdClass $client OAuth client.
-     * @param array $params Token request params.
-     * @return array
-     */
-    private function refresh_access_token(stdClass $client, array $params): array {
-        if (!in_array('refresh_token', $client->granttypes, true)) {
-            throw new exception('unauthorized_client', 400, 'This client cannot use refresh_token.');
-        }
-
-        $refresh = trim((string)($params['refresh_token'] ?? ''));
-        if ($refresh === '') {
-            throw new exception('invalid_request', 400, 'refresh_token is required.');
-        }
-
-        $resourceuri = $this->validate_resource((string)($params['resource'] ?? ''));
-        $record = $this->credentialmanager->resolve_credential($refresh);
-        if (!$record || (int)$record->tokentype !== credential_manager::TOKEN_TYPE_REFRESH) {
-            throw new exception('invalid_grant', 400, 'Refresh token is invalid or expired.');
-        }
-
-        if (!hash_equals((string)($record->oauthclientid ?? ''), (string)$client->clientid)) {
-            throw new exception('invalid_grant', 400, 'Refresh token does not belong to this client.');
-        }
-
-        if (!hash_equals((string)($record->resourceuri ?? ''), $resourceuri)) {
-            throw new exception('invalid_grant', 400, 'Refresh token does not match the requested resource.');
-        }
-
-        $this->credentialmanager->revoke_credential((string)$record->token, (int)$record->userid);
-
-        return $this->issue_oauth_token_pair(
-            $client,
-            (int)$record->userid,
-            context::instance_by_id((int)$record->contextid),
-            (string)($record->scope ?? $this->default_scope_string()),
-            (string)$record->resourceuri
-        );
-    }
-
-    /**
-     * Issue access and optional refresh tokens for a validated user/client/resource.
-     *
-     * @param stdClass $client OAuth client.
-     * @param int $userid Moodle user id.
-     * @param context $context Restricted context.
-     * @param string $scope Granted scopes.
-     * @param string $resourceuri Bound resource URI.
-     * @return array
-     */
-    private function issue_oauth_token_pair(
-        stdClass $client,
-        int $userid,
-        context $context,
-        string $scope,
-        string $resourceuri
-    ): array {
-        $service = $this->connectormanager->ensure_service_for_user($userid);
-        $scope = self::normalize_scope_string($scope, $this->default_scope_string());
-
-        $accesstoken = $this->credentialmanager->issue_oauth_access_token(
-            $service,
-            $userid,
-            $context,
-            [
-                'scope' => $scope,
-                'resourceuri' => $resourceuri,
-                'oauthclientid' => $client->clientid,
-                'name' => 'OAuth access - ' . $client->clientname,
-                'usermodified' => $userid,
-            ]
-        );
-
-        $response = [
-            'token_type' => 'Bearer',
-            'access_token' => $accesstoken->token,
-            'expires_in' => max(0, (int)$accesstoken->validuntil - time()),
-            'scope' => $scope,
-            'resource' => $resourceuri,
-        ];
-
-        if (self::scope_contains($scope, self::SCOPE_OFFLINE)) {
-            $refreshtoken = $this->credentialmanager->issue_oauth_refresh_token(
-                $service,
-                $userid,
-                $context,
-                [
-                    'scope' => $scope,
-                    'resourceuri' => $resourceuri,
-                    'oauthclientid' => $client->clientid,
-                    'name' => 'OAuth refresh - ' . $client->clientname,
-                    'usermodified' => $userid,
-                ]
-            );
-            $response['refresh_token'] = $refreshtoken->token;
-        }
-
-        return $response;
-    }
-
-    /**
-     * Fetch an authorization code record that is still valid.
-     *
-     * @param string $code Authorization code.
-     * @param string $clientid Client id.
-     * @param string $redirecturi Redirect URI.
-     * @param string $resourceuri Resource URI.
-     * @return stdClass|null
-     */
-    private function get_authorization_code(
-        string $code,
-        string $clientid,
-        string $redirecturi,
-        string $resourceuri
-    ): ?stdClass {
-        global $DB;
-
-        $sql = 'code = :code
-            AND clientid = :clientid
-            AND ' . $DB->sql_compare_text('redirecturi', 1024) . ' = ' . $DB->sql_compare_text(':redirecturi', 1024) . '
-            AND resourceuri = :resourceuri
-            AND used = :used';
-        $record = $DB->get_record_select(self::CODE_TABLE, $sql, [
-            'code' => $code,
-            'clientid' => $clientid,
-            'redirecturi' => $redirecturi,
-            'resourceuri' => $resourceuri,
-            'used' => 0,
-        ]);
-        if (!$record) {
-            return null;
-        }
-
-        if ((int)$record->expiresat < time()) {
-            $DB->set_field(self::CODE_TABLE, 'used', 1, ['id' => $record->id]);
-            return null;
-        }
-
-        return $record;
-    }
-
-    /**
-     * Mark an authorization code as consumed.
-     *
-     * @param int $id Code record id.
-     * @return void
-     */
-    private function mark_authorization_code_used(int $id): void {
-        global $DB;
-
-        $DB->update_record(self::CODE_TABLE, (object)[
-            'id' => $id,
-            'timemodified' => time(),
-            'used' => 1,
-        ]);
-    }
-
-    /**
-     * Verify a PKCE code verifier against the stored challenge.
-     *
-     * @param string $verifier Code verifier.
-     * @param string $challenge Stored code challenge.
-     * @param string $method Challenge method.
-     * @return bool
-     */
-    private function verify_pkce(string $verifier, string $challenge, string $method): bool {
-        if (strtoupper($method) !== 'S256') {
-            return false;
-        }
-
-        $expected = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
-        return hash_equals($challenge, $expected);
-    }
-
-    /**
-     * Hydrate JSON-backed client metadata into arrays.
-     *
-     * @param stdClass $record Raw DB record.
-     * @return stdClass
-     */
-    private function hydrate_client(stdClass $record): stdClass {
-        $record->redirecturis = json_decode((string)$record->redirecturis, true) ?: [];
-        $record->granttypes = json_decode((string)$record->granttypes, true) ?: [];
-        $record->responsetypes = json_decode((string)$record->responsetypes, true) ?: [];
-        return $record;
-    }
-
-    /**
-     * Normalize and validate a list-valued client metadata field.
-     *
-     * @param mixed $values Candidate field value.
-     * @param array $allowedvalues Supported values.
-     * @param string $fieldname Metadata field name.
-     * @return array
-     */
-    private function normalize_client_list(mixed $values, array $allowedvalues, string $fieldname): array {
-        if (!is_array($values) || $values === []) {
-            throw new exception('invalid_client_metadata', 400, $fieldname . ' must be a non-empty array.');
-        }
-
-        $normalized = array_values(array_unique(array_map('strval', $values)));
-        foreach ($normalized as $value) {
-            if (!in_array($value, $allowedvalues, true)) {
-                throw new exception('invalid_client_metadata', 400, 'Unsupported value in ' . $fieldname . '.');
-            }
-        }
-
-        return $normalized;
     }
 
     /**
@@ -1009,75 +586,11 @@ class service {
      * @param string $allowed Allowed scope set.
      * @return void
      */
-    private function assert_scope_subset(string $requested, string $allowed): void {
+    public function assert_scope_subset(string $requested, string $allowed): void {
         $this->assert_supported_scope_set($requested);
         $diff = array_diff(self::scope_tokens($requested), self::scope_tokens($allowed));
         if ($diff !== []) {
             throw new exception('invalid_scope', 400, 'Requested scope exceeds the client registration.');
         }
-    }
-
-    /**
-     * Generate a unique OAuth client id.
-     *
-     * @return string
-     */
-    private function generate_unique_client_id(): string {
-        global $DB;
-
-        do {
-            $clientid = 'mcp_' . bin2hex(random_bytes(16));
-        } while ($DB->record_exists(self::CLIENT_TABLE, ['clientid' => $clientid]));
-
-        return $clientid;
-    }
-
-    /**
-     * Generate a unique OAuth authorization code.
-     *
-     * @return string
-     */
-    private function generate_unique_authorization_code(): string {
-        global $DB;
-
-        do {
-            $code = bin2hex(random_bytes(24));
-        } while ($DB->record_exists(self::CODE_TABLE, ['code' => $code]));
-
-        return $code;
-    }
-
-    /**
-     * Generate a client secret.
-     *
-     * @return string
-     */
-    private function generate_secret(): string {
-        return bin2hex(random_bytes(24));
-    }
-
-    /**
-     * Read request headers into a lower-case-key array.
-     *
-     * @return array
-     */
-    private function read_headers(): array {
-        $headers = [];
-        foreach ($_SERVER as $name => $value) {
-            if (!is_string($value)) {
-                continue;
-            }
-
-            if (str_starts_with($name, 'HTTP_')) {
-                $headername = strtolower(str_replace('_', '-', substr($name, 5)));
-                $headers[$headername] = $value;
-            } else if ($name === 'CONTENT_TYPE') {
-                $headers['content-type'] = $value;
-            } else if ($name === 'CONTENT_LENGTH') {
-                $headers['content-length'] = $value;
-            }
-        }
-
-        return $headers;
     }
 }

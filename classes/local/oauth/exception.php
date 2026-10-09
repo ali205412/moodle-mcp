@@ -36,7 +36,9 @@ final class exception extends \Exception {
      * @param string $message Human-readable detail.
      */
     public function __construct(
+        /** @var string OAuth error code. */
         private string $oautherror,
+        /** @var int HTTP status code. */
         private int $httpstatus,
         string $message
     ) {

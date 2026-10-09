@@ -5,6 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.test.yml"
 DATABASE="${1:-mariadb}"
 
+# Runs share one compose project and host DB ports; queue concurrent runs instead of tearing each other down.
+exec 9>"${TMPDIR:-/tmp}/moodle-mcp-test.lock"
+flock 9
+
 cleanup() {
     docker compose -f "${COMPOSE_FILE}" --profile pgsql down --remove-orphans >/dev/null 2>&1 || true
 }

@@ -24,8 +24,6 @@
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-defined('MOODLE_INTERNAL') || die();
-
 /**
  * Upgrade function for webservice_mcp.
  *
@@ -34,6 +32,8 @@ defined('MOODLE_INTERNAL') || die();
  */
 function xmldb_webservice_mcp_upgrade(int $oldversion): bool {
     global $DB;
+
+    require_once(__DIR__ . '/upgradelib.php');
 
     $dbman = $DB->get_manager();
 
@@ -63,7 +63,6 @@ function xmldb_webservice_mcp_upgrade(int $oldversion): bool {
             $table->add_key('contextid_fk', XMLDB_KEY_FOREIGN, ['contextid'], 'context', ['id']);
             $table->add_key('uniq_token', XMLDB_KEY_UNIQUE, ['token']);
 
-            $table->add_index('userid_idx', XMLDB_INDEX_NOTUNIQUE, ['userid']);
             $table->add_index('sid_idx', XMLDB_INDEX_NOTUNIQUE, ['sid']);
             $table->add_index('service_ctx_idx', XMLDB_INDEX_NOTUNIQUE, ['serviceidentifier', 'contextid']);
 
@@ -100,7 +99,6 @@ function xmldb_webservice_mcp_upgrade(int $oldversion): bool {
             $table->add_key('uniq_auditid', XMLDB_KEY_UNIQUE, ['auditid']);
 
             $table->add_index('timecreated_idx', XMLDB_INDEX_NOTUNIQUE, ['timecreated']);
-            $table->add_index('userid_idx', XMLDB_INDEX_NOTUNIQUE, ['userid']);
             $table->add_index('action_idx', XMLDB_INDEX_NOTUNIQUE, ['action']);
 
             $dbman->create_table($table);
@@ -205,6 +203,183 @@ function xmldb_webservice_mcp_upgrade(int $oldversion): bool {
         }
 
         upgrade_plugin_savepoint(true, 2026050101, 'webservice', 'mcp');
+    }
+
+    if ($oldversion < 2026100900) {
+        // Tokens and authorization codes are now stored as SHA-256 hashes. This step does nothing else, is
+        // transactional, and is guarded by the tokenshashed flag, so a re-run can never hash twice.
+        webservice_mcp_hash_stored_tokens();
+        upgrade_plugin_savepoint(true, 2026100900, 'webservice', 'mcp');
+    }
+
+    if ($oldversion < 2026101000) {
+        $table = new xmldb_table('webservice_mcp_credential');
+
+        $field = new xmldb_field('familyid', XMLDB_TYPE_CHAR, '64', null, null, null, null, 'revoked');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        $field = new xmldb_field('familycreated', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'familyid');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        $index = new xmldb_index('familyid_idx', XMLDB_INDEX_NOTUNIQUE, ['familyid']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+
+        $field = new xmldb_field('issuerid', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'familycreated');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        $key = new xmldb_key('issuerid_fk', XMLDB_KEY_FOREIGN, ['issuerid'], 'user', ['id']);
+        $dbman->add_key($table, $key);
+
+        $table = new xmldb_table('webservice_mcp_preapproval');
+        if (!$dbman->table_exists($table)) {
+            $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+            $table->add_field('userid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('scope', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('redirecthosts', XMLDB_TYPE_TEXT, null, null, XMLDB_NOTNULL, null, null);
+            $table->add_field('contextid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('issuerid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('expiry', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0');
+            $table->add_field('timecreated', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+
+            $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+            $table->add_key('userid_fk', XMLDB_KEY_FOREIGN, ['userid'], 'user', ['id']);
+            $table->add_key('issuerid_fk', XMLDB_KEY_FOREIGN, ['issuerid'], 'user', ['id']);
+            $table->add_key('contextid_fk', XMLDB_KEY_FOREIGN, ['contextid'], 'context', ['id']);
+
+            $dbman->create_table($table);
+        }
+
+        $table = new xmldb_table('webservice_mcp_oauth_code');
+        $field = new xmldb_field('familyid', XMLDB_TYPE_CHAR, '64', null, null, null, null, 'used');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        $table = new xmldb_table('webservice_mcp_provision');
+        if (!$dbman->table_exists($table)) {
+            $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+            $table->add_field('serviceid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('itemtype', XMLDB_TYPE_CHAR, '16', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('itemname', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null);
+            $table->add_field('timecreated', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+
+            $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+            $table->add_key('serviceid_fk', XMLDB_KEY_FOREIGN, ['serviceid'], 'external_services', ['id']);
+
+            $table->add_index('service_item_uix', XMLDB_INDEX_UNIQUE, ['serviceid', 'itemtype', 'itemname']);
+
+            $dbman->create_table($table);
+        }
+
+        // The connector service used to carry component=webservice_mcp, which makes core delete it (with every admin
+        // user restriction) on each plugin upgrade because the plugin ships no db/services.php. Track ownership by id.
+        $shortname = (string)get_config('webservice_mcp', 'connectorserviceidentifier') ?: 'webservice_mcp_connector';
+        $service = $DB->get_record('external_services', ['shortname' => $shortname, 'component' => 'webservice_mcp']);
+        if ($service) {
+            // One-time: file upload/download endpoints honour these flags; admins may turn them off afterwards.
+            $DB->update_record('external_services', (object)[
+                'id' => $service->id,
+                'component' => null,
+                'downloadfiles' => 1,
+                'uploadfiles' => 1,
+            ]);
+            set_config('connectorserviceid', $service->id, 'webservice_mcp');
+            try {
+                (new \webservice_mcp\local\auth\connector_service_manager())->sync_service();
+            } catch (\Throwable $exception) {
+                debugging('MCP connector service sync failed during upgrade: ' . $exception->getMessage(), DEBUG_DEVELOPER);
+            }
+        }
+
+        upgrade_plugin_savepoint(true, 2026101000, 'webservice', 'mcp');
+    }
+
+    if ($oldversion < 2026101001) {
+        // MCP Tasks: asynchronous tool calls executed by cron.
+        $table = new xmldb_table('webservice_mcp_task');
+        $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+        $table->add_field('taskid', XMLDB_TYPE_CHAR, '36', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('userid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('familyid', XMLDB_TYPE_CHAR, '64', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('contextid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('serviceid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('connector', XMLDB_TYPE_INTEGER, '1', null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('toolname', XMLDB_TYPE_CHAR, '255', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('arguments', XMLDB_TYPE_TEXT, null, null, null, null, null);
+        $table->add_field('status', XMLDB_TYPE_CHAR, '20', null, XMLDB_NOTNULL, null, 'working');
+        $table->add_field('statusmessage', XMLDB_TYPE_TEXT, null, null, null, null, null);
+        $table->add_field('result', XMLDB_TYPE_TEXT, null, null, null, null, null);
+        $table->add_field('error', XMLDB_TYPE_TEXT, null, null, null, null, null);
+        $table->add_field('ttl', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '3600000');
+        $table->add_field('cancelrequested', XMLDB_TYPE_INTEGER, '1', null, XMLDB_NOTNULL, null, '0');
+        $table->add_field('claimtoken', XMLDB_TYPE_CHAR, '32', null, null, null, null);
+        $table->add_field('timestarted', XMLDB_TYPE_INTEGER, '10', null, null, null, null);
+        $table->add_field('timecreated', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('timemodified', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        $table->add_key('userid_fk', XMLDB_KEY_FOREIGN, ['userid'], 'user', ['id']);
+        $table->add_index('taskid_uix', XMLDB_INDEX_UNIQUE, ['taskid']);
+        $table->add_index('timecreated_idx', XMLDB_INDEX_NOTUNIQUE, ['timecreated']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+
+        upgrade_plugin_savepoint(true, 2026101001, 'webservice', 'mcp');
+    }
+
+    if ($oldversion < 2026101003) {
+        $table = new xmldb_table('webservice_mcp_credential');
+        $field = new xmldb_field('rotatedat', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'issuerid');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        $table = new xmldb_table('webservice_mcp_jti');
+        $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+        $table->add_field('keyhash', XMLDB_TYPE_CHAR, '64', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('expiresat', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        $table->add_index('keyhash_uix', XMLDB_INDEX_UNIQUE, ['keyhash']);
+        $table->add_index('expiresat_idx', XMLDB_INDEX_NOTUNIQUE, ['expiresat']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+
+        upgrade_plugin_savepoint(true, 2026101003, 'webservice', 'mcp');
+    }
+
+    if ($oldversion < 2026101004) {
+        $table = new xmldb_table('webservice_mcp_oauth_client');
+        $field = new xmldb_field('previoussecret', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'clientsecret');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+        $field = new xmldb_field('previoussecretexpires', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'previoussecret');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        upgrade_plugin_savepoint(true, 2026101004, 'webservice', 'mcp');
+    }
+
+    if ($oldversion < 2026101005) {
+        // Create the ticket signing secret up front instead of lazily on concurrent first requests.
+        webservice_mcp_ensure_signing_secret();
+        upgrade_plugin_savepoint(true, 2026101005, 'webservice', 'mcp');
+    }
+
+    if ($oldversion < 2026101006) {
+        // Keep every existing client's redirect host authorizable under the new allowlist.
+        webservice_mcp_seed_redirect_hosts();
+        upgrade_plugin_savepoint(true, 2026101006, 'webservice', 'mcp');
     }
 
     return true;

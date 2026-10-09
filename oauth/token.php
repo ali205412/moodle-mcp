@@ -14,10 +14,20 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+/**
+ * OAuth token endpoint (authorization_code and refresh_token grants).
+ *
+ * @package     webservice_mcp
+ * @copyright   2025 MohammadReza PourMohammad
+ * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
 declare(strict_types=1);
 
 define('NO_DEBUG_DISPLAY', true);
 
+// Public or client-authenticated endpoint: no browser session.
+define('NO_MOODLE_COOKIES', true);
 require('../../../config.php');
 
 use webservice_mcp\local\oauth\exception as oauth_exception;
@@ -43,7 +53,8 @@ try {
     }
 
     if (strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
-        throw new oauth_exception('invalid_request', 400, 'The token endpoint requires POST.');
+        header('Allow: POST');
+        throw new oauth_exception('invalid_request', 405, 'The token endpoint requires POST.');
     }
 
     if (empty($_POST)) {
@@ -66,5 +77,13 @@ try {
     echo json_encode([
         'error' => $exception->oauth_error(),
         'error_description' => $exception->getMessage(),
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+} catch (\Throwable $exception) {
+    // Never let a Moodle error page leak out of a JSON endpoint.
+    debugging('MCP OAuth endpoint failure: ' . $exception->getMessage(), DEBUG_DEVELOPER);
+    http_response_code(500);
+    echo json_encode([
+        'error' => 'server_error',
+        'error_description' => 'The authorization server encountered an unexpected error.',
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 }

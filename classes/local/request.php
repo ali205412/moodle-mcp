@@ -89,6 +89,26 @@ class request {
             );
         }
 
+        if (isset($data['id']) && !is_string($data['id']) && !is_int($data['id'])) {
+            throw new moodle_exception(
+                'err_invalid_jsonrpc',
+                'webservice_mcp',
+                '',
+                null,
+                'Request id must be a string or integer'
+            );
+        }
+
+        if (isset($data['params']) && !is_array($data['params'])) {
+            throw new moodle_exception(
+                'err_invalid_jsonrpc',
+                'webservice_mcp',
+                '',
+                null,
+                'Params must be an object'
+            );
+        }
+
         if (empty($data['method']) || !is_string($data['method'])) {
             throw new moodle_exception(
                 'err_missing_method',
@@ -131,6 +151,16 @@ class request {
                 '',
                 null,
                 'JSON parsing error: ' . json_last_error_msg()
+            );
+        }
+
+        if (is_array($data) && $data !== [] && array_keys($data) === range(0, count($data) - 1)) {
+            throw new moodle_exception(
+                'err_invalid_jsonrpc',
+                'webservice_mcp',
+                '',
+                null,
+                'JSON-RPC batching is not supported; send one message per request'
             );
         }
 

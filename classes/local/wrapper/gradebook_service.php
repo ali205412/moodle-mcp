@@ -39,6 +39,7 @@ class gradebook_service {
      * @return array
      */
     public function create_manual_item(int $courseid, array $payload): array {
+        $this->require_gradelib();
         return $this->save_manual_item($courseid, 0, $payload);
     }
 
@@ -51,6 +52,7 @@ class gradebook_service {
      * @return array
      */
     public function update_manual_item(int $courseid, int $itemid, array $payload): array {
+        $this->require_gradelib();
         return $this->save_manual_item($courseid, $itemid, $payload);
     }
 
@@ -64,13 +66,17 @@ class gradebook_service {
      * @return array
      */
     public function move_item(int $courseid, int $itemid, ?int $parentcategoryid = null, ?int $afteritemid = null): array {
+        $this->require_gradelib();
         $coursecontext = $this->course_context($courseid);
         external_api::validate_context($coursecontext);
         \require_capability('moodle/grade:manage', $coursecontext);
 
         $gradeitem = $this->manual_grade_item($courseid, $itemid);
         if ($parentcategoryid !== null) {
-            $gradeitem->set_parent($parentcategoryid, false);
+            $this->grade_category($courseid, $parentcategoryid);
+            if (!$gradeitem->set_parent($parentcategoryid, false)) {
+                throw new \moodle_exception('wrapper:gradeparentfailed', 'webservice_mcp', '', $parentcategoryid);
+            }
         }
         if ($afteritemid !== null) {
             $afteritem = $this->grade_item($courseid, $afteritemid);
@@ -88,6 +94,7 @@ class gradebook_service {
      * @return array
      */
     public function delete_items(int $courseid, array $itemids): array {
+        $this->require_gradelib();
         $coursecontext = $this->course_context($courseid);
         external_api::validate_context($coursecontext);
         \require_capability('moodle/grade:manage', $coursecontext);
@@ -113,6 +120,7 @@ class gradebook_service {
      * @return array
      */
     public function update_category(int $courseid, int $categoryid, array $payload): array {
+        $this->require_gradelib();
         require_once($this->dirroot() . '/grade/edit/tree/lib.php');
 
         $coursecontext = $this->course_context($courseid);
@@ -143,6 +151,7 @@ class gradebook_service {
         ?int $aftercategoryid = null,
         ?int $afteritemid = null
     ): array {
+        $this->require_gradelib();
         $coursecontext = $this->course_context($courseid);
         external_api::validate_context($coursecontext);
         \require_capability('moodle/grade:manage', $coursecontext);
@@ -153,7 +162,10 @@ class gradebook_service {
         }
 
         if ($parentcategoryid !== null) {
-            $gradecategory->set_parent($parentcategoryid, 'gradebook');
+            $this->grade_category($courseid, $parentcategoryid);
+            if (!$gradecategory->set_parent($parentcategoryid, 'gradebook')) {
+                throw new \moodle_exception('wrapper:gradeparentfailed', 'webservice_mcp', '', $parentcategoryid);
+            }
         }
 
         if ($aftercategoryid !== null) {
@@ -175,6 +187,7 @@ class gradebook_service {
      * @return array
      */
     public function delete_categories(int $courseid, array $categoryids): array {
+        $this->require_gradelib();
         $coursecontext = $this->course_context($courseid);
         external_api::validate_context($coursecontext);
         \require_capability('moodle/grade:manage', $coursecontext);
@@ -222,12 +235,16 @@ class gradebook_service {
         }
         if (array_key_exists('idnumber', $payload)) {
             $data->idnumber = $this->normalize_optional_string((string)$payload['idnumber']);
+            if ($data->idnumber !== null && !\grade_verify_idnumber($data->idnumber, $courseid, $itemid > 0 ? $gradeitem : null)) {
+                throw new \moodle_exception('idnumbertaken');
+            }
         }
         if (array_key_exists('gradetype', $payload)) {
             $data->gradetype = $this->grade_type_constant((string)$payload['gradetype']);
         }
         if (array_key_exists('scaleid', $payload)) {
             $data->scaleid = (int)$payload['scaleid'];
+            $this->require_usable_scale($courseid, $data->scaleid);
         }
         if (array_key_exists('grademax', $payload)) {
             $data->grademax = (float)$payload['grademax'];
@@ -239,7 +256,7 @@ class gradebook_service {
             $data->gradepass = (float)$payload['gradepass'];
         }
         if (array_key_exists('weightoverride', $payload)) {
-            $data->weightoverride = (int)!empty($payload['weightoverride']);
+            $data->weightoverride = (int)arguments::to_bool($payload['weightoverride']);
         } else {
             $data->weightoverride = $defaults['weightoverride'] ?? 0;
         }
@@ -266,10 +283,12 @@ class gradebook_service {
         if (empty($gradeitem->id)) {
             $gradeitem->itemtype = 'manual';
             $gradeitem->insert();
-            $gradeitem->set_parent($parentcategory->id, false);
+            if (!$gradeitem->set_parent($parentcategory->id, false)) {
+                throw new \moodle_exception('wrapper:gradeparentfailed', 'webservice_mcp', '', $parentcategory->id);
+            }
         } else {
             $gradeitem->update();
-            if (!empty($payload['rescalegrades'])) {
+            if (arguments::to_bool($payload['rescalegrades'] ?? false)) {
                 $gradeitem->rescale_grades_keep_percentage(
                     $oldmin,
                     $oldmax,
@@ -284,7 +303,7 @@ class gradebook_service {
         if (array_key_exists('hiddenuntil', $payload) && !empty($payload['hiddenuntil'])) {
             $hide = (int)$payload['hiddenuntil'];
         } else if (array_key_exists('hidden', $payload)) {
-            $hide = !empty($payload['hidden']) ? 1 : 0;
+            $hide = (int)arguments::to_bool($payload['hidden']);
         }
         if ($gradeitem->can_control_visibility()) {
             $gradeitem->set_hidden($hide, true);
@@ -294,7 +313,7 @@ class gradebook_service {
             $gradeitem->set_locktime((int)$payload['locktime']);
         }
         if (array_key_exists('locked', $payload)) {
-            $gradeitem->set_locked(!empty($payload['locked']));
+            $gradeitem->set_locked(arguments::to_bool($payload['locked']));
         }
 
         return $this->grade_item_result($gradeitem);
@@ -318,10 +337,10 @@ class gradebook_service {
             $data->aggregation = (int)$payload['aggregation'];
         }
         if (array_key_exists('aggregateonlygraded', $payload)) {
-            $data->aggregateonlygraded = !empty($payload['aggregateonlygraded']) ? 1 : 0;
+            $data->aggregateonlygraded = (int)arguments::to_bool($payload['aggregateonlygraded']);
         }
         if (array_key_exists('aggregateoutcomes', $payload)) {
-            $data->aggregateoutcomes = !empty($payload['aggregateoutcomes']) ? 1 : 0;
+            $data->aggregateoutcomes = (int)arguments::to_bool($payload['aggregateoutcomes']);
         }
         if (array_key_exists('droplow', $payload)) {
             $data->droplow = (int)$payload['droplow'];
@@ -353,6 +372,8 @@ class gradebook_service {
             $value = $payload[$source];
             if ($source === 'gradetype') {
                 $value = $this->grade_type_constant((string)$value);
+            } else if ($source === 'weightoverride') {
+                $value = (int)arguments::to_bool($value);
             } else if ($source === 'idnumber') {
                 $value = $this->normalize_optional_string((string)$value);
             }
@@ -509,6 +530,36 @@ class gradebook_service {
     private function normalize_ids(array $ids): array {
         $ids = array_values(array_unique(array_map('intval', $ids)));
         return array_values(array_filter($ids, static fn(int $id): bool => $id > 0));
+    }
+
+    /**
+     * Require a site scale or one of the course's own scales, as the grade item form's scale menu offers.
+     *
+     * @param int $courseid Course id.
+     * @param int $scaleid Scale id (0 means none).
+     * @return void
+     */
+    private function require_usable_scale(int $courseid, int $scaleid): void {
+        global $DB;
+
+        if (
+            $scaleid > 0 && !$DB->record_exists_select(
+                'scale',
+                'id = ? AND (courseid = 0 OR courseid = ?)',
+                [$scaleid, $courseid]
+            )
+        ) {
+            throw arguments::invalid('scaleid must be a site scale or a scale of this course.');
+        }
+    }
+
+    /**
+     * Load gradelib; grade_item and grade_category are not autoloaded.
+     *
+     * @return void
+     */
+    private function require_gradelib(): void {
+        require_once($this->dirroot() . '/lib/gradelib.php');
     }
 
     /**

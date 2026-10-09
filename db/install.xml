@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<XMLDB PATH="webservice/mcp/db" VERSION="2026042201" COMMENT="XMLDB file for Moodle webservice_mcp"
+<XMLDB PATH="webservice/mcp/db" VERSION="2026101006" COMMENT="XMLDB file for Moodle webservice_mcp"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
 >
@@ -11,7 +11,7 @@
         <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
         <FIELD NAME="usermodified" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
         <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="The Moodle user this connector credential belongs to."/>
-        <FIELD NAME="token" TYPE="char" LENGTH="128" NOTNULL="true" SEQUENCE="false" COMMENT="Opaque connector credential token."/>
+        <FIELD NAME="token" TYPE="char" LENGTH="128" NOTNULL="true" SEQUENCE="false" COMMENT="SHA-256 hash of the opaque connector credential token."/>
         <FIELD NAME="name" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Human-readable label for operator inspection."/>
         <FIELD NAME="serviceidentifier" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Connector-managed service boundary identifier."/>
         <FIELD NAME="contextid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Restricted context anchor for connector credential use."/>
@@ -24,18 +24,23 @@
         <FIELD NAME="oauthclientid" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="OAuth client id that originated this credential, when applicable."/>
         <FIELD NAME="lastaccess" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="Last successful use timestamp."/>
         <FIELD NAME="revoked" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Whether the connector credential has been revoked."/>
+        <FIELD NAME="familyid" TYPE="char" LENGTH="64" NOTNULL="false" SEQUENCE="false" COMMENT="OAuth token family (grant) identifier shared by rotated access and refresh tokens."/>
+        <FIELD NAME="familycreated" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="When the OAuth token family was first granted."/>
+        <FIELD NAME="issuerid" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="Administrator who issued this key for the user, for admin-issued keys."/>
+        <FIELD NAME="rotatedat" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="When this refresh token was rotated (replaced), for the reuse grace window."/>
       </FIELDS>
       <KEYS>
         <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
         <KEY NAME="userid_fk" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
         <KEY NAME="usermodified_fk" TYPE="foreign" FIELDS="usermodified" REFTABLE="user" REFFIELDS="id"/>
         <KEY NAME="contextid_fk" TYPE="foreign" FIELDS="contextid" REFTABLE="context" REFFIELDS="id"/>
+        <KEY NAME="issuerid_fk" TYPE="foreign" FIELDS="issuerid" REFTABLE="user" REFFIELDS="id"/>
         <KEY NAME="uniq_token" TYPE="unique" FIELDS="token"/>
       </KEYS>
       <INDEXES>
-        <INDEX NAME="userid_idx" UNIQUE="false" FIELDS="userid"/>
         <INDEX NAME="sid_idx" UNIQUE="false" FIELDS="sid"/>
         <INDEX NAME="oauthclientid_idx" UNIQUE="false" FIELDS="oauthclientid"/>
+        <INDEX NAME="familyid_idx" UNIQUE="false" FIELDS="familyid"/>
         <INDEX NAME="service_ctx_idx" UNIQUE="false" FIELDS="serviceidentifier, contextid"/>
       </INDEXES>
     </TABLE>
@@ -66,7 +71,6 @@
       </KEYS>
       <INDEXES>
         <INDEX NAME="timecreated_idx" UNIQUE="false" FIELDS="timecreated"/>
-        <INDEX NAME="userid_idx" UNIQUE="false" FIELDS="userid"/>
         <INDEX NAME="action_idx" UNIQUE="false" FIELDS="action"/>
       </INDEXES>
     </TABLE>
@@ -77,6 +81,8 @@
         <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
         <FIELD NAME="clientid" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Public OAuth client id."/>
         <FIELD NAME="clientsecret" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="Hashed client secret for confidential clients."/>
+        <FIELD NAME="previoussecret" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="Hash of the secret replaced by the last rotation, accepted until previoussecretexpires."/>
+        <FIELD NAME="previoussecretexpires" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="End of the secret rotation overlap."/>
         <FIELD NAME="clientname" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Display label shown during authorization."/>
         <FIELD NAME="redirecturis" TYPE="text" NOTNULL="true" SEQUENCE="false" COMMENT="JSON array of registered redirect URIs."/>
         <FIELD NAME="scope" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Registered maximum scope set for the client."/>
@@ -102,7 +108,7 @@
         <FIELD NAME="expiresat" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Authorization-code expiry timestamp."/>
         <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Resource owner user id."/>
         <FIELD NAME="clientid" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="OAuth client id bound to this code."/>
-        <FIELD NAME="code" TYPE="char" LENGTH="128" NOTNULL="true" SEQUENCE="false" COMMENT="Opaque authorization code."/>
+        <FIELD NAME="code" TYPE="char" LENGTH="128" NOTNULL="true" SEQUENCE="false" COMMENT="SHA-256 hash of the opaque authorization code."/>
         <FIELD NAME="redirecturi" TYPE="text" NOTNULL="true" SEQUENCE="false" COMMENT="Redirect URI bound to the authorization code."/>
         <FIELD NAME="scope" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Granted scope set."/>
         <FIELD NAME="resourceuri" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Canonical MCP resource URI requested by the client."/>
@@ -111,6 +117,7 @@
         <FIELD NAME="codechallenge" TYPE="char" LENGTH="128" NOTNULL="true" SEQUENCE="false" COMMENT="PKCE code challenge."/>
         <FIELD NAME="codechallengemethod" TYPE="char" LENGTH="16" NOTNULL="true" DEFAULT="S256" SEQUENCE="false" COMMENT="PKCE challenge method."/>
         <FIELD NAME="used" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Whether the authorization code has been consumed."/>
+        <FIELD NAME="familyid" TYPE="char" LENGTH="64" NOTNULL="false" SEQUENCE="false" COMMENT="Token family issued from this code, revoked if the code is replayed."/>
       </FIELDS>
       <KEYS>
         <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
@@ -122,6 +129,40 @@
         <INDEX NAME="clientid_idx" UNIQUE="false" FIELDS="clientid"/>
         <INDEX NAME="expiresat_idx" UNIQUE="false" FIELDS="expiresat"/>
       </INDEXES>
+    </TABLE>
+    <TABLE NAME="webservice_mcp_provision" COMMENT="Items the plugin has auto-provisioned into its connector service, so admin removals stick.">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="serviceid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Plugin-owned external service id."/>
+        <FIELD NAME="itemtype" TYPE="char" LENGTH="16" NOTNULL="true" SEQUENCE="false" COMMENT="user or function."/>
+        <FIELD NAME="itemname" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="User id or external function name."/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="serviceid_fk" TYPE="foreign" FIELDS="serviceid" REFTABLE="external_services" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="service_item_uix" UNIQUE="true" FIELDS="serviceid, itemtype, itemname"/>
+      </INDEXES>
+    </TABLE>
+    <TABLE NAME="webservice_mcp_preapproval" COMMENT="Administrator pre-approvals letting users skip the OAuth consent screen.">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Pre-approved user."/>
+        <FIELD NAME="scope" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false" COMMENT="Maximum scope that may be granted without consent."/>
+        <FIELD NAME="redirecthosts" TYPE="text" NOTNULL="true" SEQUENCE="false" COMMENT="Newline-separated redirect hosts covered by the pre-approval."/>
+        <FIELD NAME="contextid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Context the pre-approval applies to."/>
+        <FIELD NAME="issuerid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Administrator who created the pre-approval."/>
+        <FIELD NAME="expiry" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Expiry timestamp, 0 for none."/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="userid_fk" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+        <KEY NAME="issuerid_fk" TYPE="foreign" FIELDS="issuerid" REFTABLE="user" REFFIELDS="id"/>
+        <KEY NAME="contextid_fk" TYPE="foreign" FIELDS="contextid" REFTABLE="context" REFFIELDS="id"/>
+      </KEYS>
     </TABLE>
     <TABLE NAME="webservice_mcp_memory" COMMENT="Persistent knowledgebase storage for MCP resources.">
       <FIELDS>
@@ -135,6 +176,51 @@
         <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
         <KEY NAME="userid_fk" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
       </KEYS>
+    </TABLE>
+    <TABLE NAME="webservice_mcp_task" COMMENT="MCP Tasks: asynchronous tool calls executed by cron as their owner.">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="taskid" TYPE="char" LENGTH="36" NOTNULL="true" SEQUENCE="false" COMMENT="Public task id (UUID)."/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="familyid" TYPE="char" LENGTH="64" NOTNULL="true" SEQUENCE="false" COMMENT="Credential family the task belongs to."/>
+        <FIELD NAME="contextid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Token context restriction."/>
+        <FIELD NAME="serviceid" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+        <FIELD NAME="connector" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+        <FIELD NAME="toolname" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="arguments" TYPE="text" NOTNULL="false" SEQUENCE="false"/>
+        <FIELD NAME="status" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="working" SEQUENCE="false"/>
+        <FIELD NAME="statusmessage" TYPE="text" NOTNULL="false" SEQUENCE="false"/>
+        <FIELD NAME="result" TYPE="text" NOTNULL="false" SEQUENCE="false"/>
+        <FIELD NAME="error" TYPE="text" NOTNULL="false" SEQUENCE="false"/>
+        <FIELD NAME="ttl" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="3600000" SEQUENCE="false" COMMENT="Retention in milliseconds."/>
+        <FIELD NAME="cancelrequested" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+        <FIELD NAME="claimtoken" TYPE="char" LENGTH="32" NOTNULL="false" SEQUENCE="false"/>
+        <FIELD NAME="timestarted" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="userid_fk" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="taskid_uix" UNIQUE="true" FIELDS="taskid"/>
+        <INDEX NAME="timecreated_idx" UNIQUE="false" FIELDS="timecreated"/>
+      </INDEXES>
+    </TABLE>
+    <TABLE NAME="webservice_mcp_jti" COMMENT="Identity assertion ids already redeemed, kept until the assertion expires (replay protection).">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="keyhash" TYPE="char" LENGTH="64" NOTNULL="true" SEQUENCE="false" COMMENT="SHA-256 of issuer and jti."/>
+        <FIELD NAME="expiresat" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Assertion expiry; the row may be purged after it."/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="keyhash_uix" UNIQUE="true" FIELDS="keyhash"/>
+        <INDEX NAME="expiresat_idx" UNIQUE="false" FIELDS="expiresat"/>
+      </INDEXES>
     </TABLE>
   </TABLES>
 </XMLDB>

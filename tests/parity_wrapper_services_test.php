@@ -23,8 +23,6 @@ use webservice_mcp\local\wrapper\badge_service;
 use webservice_mcp\local\wrapper\gradebook_service;
 use webservice_mcp\local\wrapper\question_bank_service;
 
-defined('MOODLE_INTERNAL') || die();
-
 /**
  * Integration-style tests for the phase 9 parity wrappers.
  *
@@ -36,6 +34,12 @@ defined('MOODLE_INTERNAL') || die();
  * @covers      \webservice_mcp\local\wrapper\question_bank_service
  * @covers      \webservice_mcp\local\wrapper\gradebook_service
  * @covers      \webservice_mcp\local\wrapper\badge_service
+ * @covers      \webservice_mcp\local\wrapper\badge_record_builder
+ * @covers      \webservice_mcp\local\wrapper\question_category_service
+ * @covers      \webservice_mcp\local\wrapper\question_service
+ * @covers      \webservice_mcp\local\wrapper\question_form_builder
+ * @covers      \webservice_mcp\local\wrapper\question_import_service
+ * @covers      \webservice_mcp\local\wrapper\manager
  */
 final class parity_wrapper_services_test extends advanced_testcase {
     /**
@@ -231,5 +235,352 @@ final class parity_wrapper_services_test extends advanced_testcase {
 
         $deleted = $service->delete_badges([$created['badgeid'], $duplicate['badgeid'], $awardablebadge->id]);
         $this->assertTrue($deleted['deleted']);
+    }
+
+    /**
+     * Test question wrappers validate every touched context and report hidden (in-use) questions.
+     */
+    public function test_question_bank_service_enforces_contexts_and_reports_hidden_questions(): void {
+        global $CFG;
+        require_once($CFG->dirroot . '/mod/quiz/locallib.php');
+
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+        external_api::set_context_restriction(null);
+
+        /** @var \core_question_generator $questiongenerator */
+        $questiongenerator = $this->getDataGenerator()->get_plugin_generator('core_question');
+        $systemcategory = $questiongenerator->create_question_category();
+        $question = $questiongenerator->create_question('shortanswer', null, ['category' => $systemcategory->id]);
+
+        $course = $this->getDataGenerator()->create_course();
+        $coursecontext = \context_course::instance($course->id);
+        $coursecategory = $questiongenerator->create_question_category(['contextid' => $coursecontext->id]);
+        $service = new question_bank_service();
+
+        external_api::set_context_restriction($coursecontext);
+        $cases = [
+            fn() => $service->delete_questions([$question->id]),
+            fn() => $service->move_questions([$question->id], (int)$coursecategory->id),
+        ];
+        foreach ($cases as $call) {
+            try {
+                $call();
+                $this->fail('A system-context question must not be reachable from a course-restricted token.');
+            } catch (\core_external\restricted_context_exception $exception) {
+                $this->assertInstanceOf(\core_external\restricted_context_exception::class, $exception);
+            }
+        }
+
+        external_api::set_context_restriction(null);
+        $quiz = $this->getDataGenerator()->create_module('quiz', ['course' => $course->id]);
+        \quiz_add_quiz_question($question->id, $quiz);
+        $unused = $questiongenerator->create_question('shortanswer', null, ['category' => $systemcategory->id]);
+
+        $result = $service->delete_questions([$question->id, $unused->id]);
+        $this->assertFalse($result['deleted']);
+        $this->assertSame([(int)$question->id], $result['hiddenquestionids']);
+        $this->assertSame([(int)$unused->id], $result['deletedquestionids']);
+    }
+
+    /**
+     * Test badge wrappers refuse to edit active badges and validate award recipients.
+     */
+    public function test_badge_service_guards_active_badges_and_recipients(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+        external_api::set_context_restriction(null);
+
+        /** @var \core_badges_generator $badgegenerator */
+        $badgegenerator = $this->getDataGenerator()->get_plugin_generator('core_badges');
+        $service = new badge_service();
+        $managerroleid = (int)$DB->get_field('role', 'id', ['shortname' => 'manager'], MUST_EXIST);
+
+        $active = $badgegenerator->create_badge(['name' => 'Active badge']);
+        try {
+            $service->update_badge($active->id, ['name' => 'Renamed']);
+            $this->fail('Active badges must not be edited.');
+        } catch (\moodle_exception $exception) {
+            $this->assertSame('wrapper:badgelocked', $exception->errorcode);
+        }
+
+        $badgegenerator->create_criteria(['badgeid' => $active->id, 'roleid' => $managerroleid]);
+        $deleted = $this->getDataGenerator()->create_user();
+        delete_user($deleted);
+        $course = $this->getDataGenerator()->create_course();
+        $coursebadge = $badgegenerator->create_badge([
+            'name' => 'Course badge',
+            'type' => BADGE_TYPE_COURSE,
+            'courseid' => $course->id,
+        ]);
+        $badgegenerator->create_criteria(['badgeid' => $coursebadge->id, 'roleid' => $managerroleid]);
+        $notenrolled = $this->getDataGenerator()->create_user();
+
+        $cases = [[$active->id, $deleted->id], [$active->id, (int)guest_user()->id], [$coursebadge->id, $notenrolled->id]];
+        foreach ($cases as [$badgeid, $recipientid]) {
+            try {
+                $service->award_badge($badgeid, $recipientid);
+                $this->fail("User {$recipientid} must not receive badge {$badgeid}.");
+            } catch (\moodle_exception $exception) {
+                $this->assertSame('wrapper:badgerecipientinvalid', $exception->errorcode);
+            }
+        }
+    }
+
+    /**
+     * Test gradebook wrappers keep items inside the course and parse string booleans.
+     */
+    public function test_gradebook_service_rejects_foreign_parent_and_parses_booleans(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+        external_api::set_context_restriction(null);
+
+        $course = $this->getDataGenerator()->create_course();
+        $othercourse = $this->getDataGenerator()->create_course();
+        $foreigncategory = $this->getDataGenerator()->create_grade_category(['courseid' => $othercourse->id]);
+        $service = new gradebook_service();
+
+        $item = $service->create_manual_item($course->id, ['itemname' => 'Item', 'hidden' => 'false', 'locked' => 'false']);
+        $gradeitem = \grade_item::fetch(['id' => $item['itemid']]);
+        $this->assertEquals(0, $gradeitem->hidden);
+        $this->assertEquals(0, $gradeitem->locked);
+
+        $this->expectException(\moodle_exception::class);
+        $service->move_item($course->id, $item['itemid'], (int)$foreigncategory->id);
+    }
+
+    /**
+     * Test badge and alignment fields are cleaned like the core forms: no stored script, no javascript: URLs.
+     */
+    public function test_badge_fields_are_cleaned_like_core_forms(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+        external_api::set_context_restriction(null);
+        $service = new badge_service();
+
+        $created = $service->create_badge([
+            'name' => '<b>Bold</b> badge',
+            'description' => '<script>alert(1)</script>Real description',
+            'imagecaption' => '<img src=x onerror=alert(1)>Caption',
+            'tags' => ['<i>tag</i>'],
+        ]);
+        $record = $DB->get_record('badge', ['id' => $created['badgeid']], '*', MUST_EXIST);
+        $this->assertStringNotContainsString('<script', $record->description);
+        $this->assertStringContainsString('Real description', $record->description);
+        $this->assertStringNotContainsString('<', $record->name);
+        $this->assertStringNotContainsString('onerror', $record->imagecaption);
+
+        $cases = [
+            ['imageauthorurl' => 'javascript:alert(1)'],
+            ['issuercontact' => 'not-an-email'],
+            ['imageauthoremail' => 'also-not-an-email'],
+        ];
+        foreach ($cases as $payload) {
+            try {
+                $service->update_badge($created['badgeid'], $payload);
+                $this->fail('Invalid badge field accepted: ' . json_encode($payload));
+            } catch (\moodle_exception $exception) {
+                $this->assertSame('wrapper:invalidinput', $exception->errorcode);
+            }
+        }
+
+        try {
+            $service->save_alignment($created['badgeid'], ['targetname' => 'X', 'targeturl' => 'javascript:alert(1)']);
+            $this->fail('javascript: alignment URL accepted.');
+        } catch (\moodle_exception $exception) {
+            $this->assertSame('wrapper:invalidinput', $exception->errorcode);
+        }
+        $alignment = $service->save_alignment($created['badgeid'], [
+            'targetname' => '<script>x</script>Target',
+            'targeturl' => 'https://example.com/standard',
+            'targetdescription' => '<script>alert(1)</script>About',
+        ]);
+        $stored = $DB->get_record('badge_alignment', ['id' => $alignment['alignmentid']], '*', MUST_EXIST);
+        $this->assertStringNotContainsString('<script', $stored->targetname . $stored->targetdescription);
+
+        // Updating without tags keeps the existing tags (exercises the Moodle 4.2 get_badge_tags() fallback).
+        $service->update_badge($created['badgeid'], ['description' => 'Updated']);
+        $this->assertNotEmpty(\core_tag_tag::get_item_tags_array('core_badges', 'badge', $created['badgeid']));
+    }
+
+    /**
+     * Test the site badge switches apply to every badge operation, and relation/alignment ids are scoped.
+     */
+    public function test_badge_switches_and_relation_scoping(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+        external_api::set_context_restriction(null);
+        $service = new badge_service();
+
+        $courseone = $this->getDataGenerator()->create_course();
+        $coursetwo = $this->getDataGenerator()->create_course();
+        $badgeone = $service->create_badge(['name' => 'One'], (int)$courseone->id);
+        $badgetwo = $service->create_badge(['name' => 'Two'], (int)$coursetwo->id);
+        $sitebadge = $service->create_badge(['name' => 'Site']);
+
+        try {
+            $service->add_related_badges($badgeone['badgeid'], [$badgetwo['badgeid']]);
+            $this->fail('A badge from another course was related.');
+        } catch (\moodle_exception $exception) {
+            $this->assertSame('wrapper:invalidinput', $exception->errorcode);
+        }
+        $this->assertTrue($service->add_related_badges($badgeone['badgeid'], [$sitebadge['badgeid']])['status']);
+
+        $foreign = $service->save_alignment($badgetwo['badgeid'], ['targetname' => 'T', 'targeturl' => 'https://example.com']);
+        try {
+            $service->save_alignment(
+                $badgeone['badgeid'],
+                ['targetname' => 'T', 'targeturl' => 'https://example.com'],
+                $foreign['alignmentid']
+            );
+            $this->fail('Another badge\'s alignment was overwritten.');
+        } catch (\moodle_exception $exception) {
+            $this->assertSame('wrapper:invalidinput', $exception->errorcode);
+        }
+
+        set_config('badges_allowcoursebadges', 0);
+        try {
+            $service->update_badge($badgeone['badgeid'], ['description' => 'x']);
+            $this->fail('Course badges were editable while disabled.');
+        } catch (\moodle_exception $exception) {
+            $this->assertSame('coursebadgesdisabled', $exception->errorcode);
+        }
+
+        set_config('enablebadges', 0);
+        $cases = [
+            fn() => $service->update_badge($sitebadge['badgeid'], ['description' => 'x']),
+            fn() => $service->delete_badges([$sitebadge['badgeid']]),
+            fn() => $service->award_badge($sitebadge['badgeid'], (int)get_admin()->id),
+        ];
+        foreach ($cases as $call) {
+            try {
+                $call();
+                $this->fail('Badge operation ran while badges are disabled.');
+            } catch (\moodle_exception $exception) {
+                $this->assertSame('badgesdisabled', $exception->errorcode);
+            }
+        }
+    }
+
+    /**
+     * Test grade item scales must be site or course scales.
+     */
+    public function test_gradebook_rejects_foreign_scale(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+        external_api::set_context_restriction(null);
+
+        $course = $this->getDataGenerator()->create_course();
+        $othercourse = $this->getDataGenerator()->create_course();
+        $foreignscale = $this->getDataGenerator()->create_scale(['courseid' => $othercourse->id]);
+        $sitescale = $this->getDataGenerator()->create_scale(['courseid' => 0]);
+        $service = new gradebook_service();
+
+        $item = $service->create_manual_item($course->id, ['itemname' => 'Scaled', 'gradetype' => 'scale',
+            'scaleid' => $sitescale->id]);
+        $this->assertGreaterThan(0, $item['itemid']);
+
+        $this->expectExceptionMessageMatches('/scaleid must be a site scale/');
+        $service->create_manual_item($course->id, ['itemname' => 'Foreign', 'gradetype' => 'scale',
+            'scaleid' => $foreignscale->id]);
+    }
+
+    /**
+     * Test question categories cannot be moved under themselves or their descendants.
+     */
+    public function test_question_category_cycle_is_rejected(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+        external_api::set_context_restriction(null);
+
+        $service = new question_bank_service();
+        $systemcontext = context_system::instance();
+        // A sibling keeps Parent from being the only child of the top category, whose parent cannot change.
+        $service->create_category($systemcontext->id, 'Sibling');
+        $parent = $service->create_category($systemcontext->id, 'Parent');
+        $child = $service->create_category($systemcontext->id, 'Child', $parent['categoryid']);
+
+        foreach ([$parent['categoryid'], $child['categoryid']] as $newparent) {
+            try {
+                $service->update_category($parent['categoryid'], 'Parent', '', FORMAT_HTML, $newparent);
+                $this->fail('A category cycle was created.');
+            } catch (\moodle_exception $exception) {
+                $this->assertSame('wrapper:invalidinput', $exception->errorcode);
+            }
+        }
+    }
+
+    /**
+     * Test saving a new question version keeps embedded files.
+     */
+    public function test_update_question_preserves_embedded_files(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+        external_api::set_context_restriction(null);
+
+        $service = new question_bank_service();
+        $category = $service->create_category(context_system::instance()->id, 'Files');
+        $created = $service->create_question($category['categoryid'], [
+            'qtype' => 'essay',
+            'name' => 'With image',
+            'questiontext' => '<p><img src="@@PLUGINFILE@@/diagram.png" alt="d"></p>',
+        ]);
+        $fs = get_file_storage();
+        $fs->create_file_from_string([
+            'contextid' => $created['contextid'],
+            'component' => 'question',
+            'filearea' => 'questiontext',
+            'itemid' => $created['questionid'],
+            'filepath' => '/',
+            'filename' => 'diagram.png',
+        ], 'png-bytes');
+
+        $updated = $service->update_question($created['questionid'], ['name' => 'With image v2']);
+
+        $files = $fs->get_area_files($updated['contextid'], 'question', 'questiontext', $updated['questionid'], '', false);
+        $this->assertSame(['diagram.png'], array_values(array_map(fn($file) => $file->get_filename(), $files)));
+    }
+
+    /**
+     * Test a wrapper that fails inside its own transaction never leaves it open.
+     */
+    public function test_failed_wrapper_aborts_open_transactions(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+
+        $failing = new class extends gradebook_service {
+            /**
+             * Open a transaction and fail before committing it.
+             *
+             * @param int $courseid Course id.
+             * @param array $itemids Item ids.
+             * @return array
+             */
+            public function delete_items(int $courseid, array $itemids): array {
+                global $DB;
+                $DB->start_delegated_transaction();
+                throw new \moodle_exception('error');
+            }
+        };
+        $manager = new \webservice_mcp\local\wrapper\manager([], true, null, null, $failing);
+
+        try {
+            $manager->execute(
+                'wrapper_gradebook_delete_items',
+                ['courseid' => SITEID, 'itemids' => [1]],
+                context_system::instance(),
+                get_admin()
+            );
+            $this->fail('Expected the wrapper to fail.');
+        } catch (\moodle_exception $exception) {
+            $this->assertSame('error', $exception->errorcode);
+        }
+        $this->assertFalse($DB->is_transaction_started());
     }
 }

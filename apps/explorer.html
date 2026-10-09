@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moodle Explorer</title>
+<style>
+  :root {
+    --bg: var(--color-background-primary, #fff);
+    --bg2: var(--color-background-secondary, #f5f5f4);
+    --fg: var(--color-text-primary, #1c1917);
+    --fg2: var(--color-text-secondary, #57534e);
+    --line: var(--color-border-primary, #e7e5e4);
+    --accent: var(--color-text-info, #c2410c);
+    --danger: var(--color-text-danger, #b91c1c);
+    --radius: var(--border-radius-md, 8px);
+    font-family: var(--font-sans, system-ui, sans-serif);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px; background: var(--bg); color: var(--fg); font-size: 14px; }
+  header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  header h1 { font-size: 16px; margin: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--bg2); color: var(--fg);
+    border-radius: var(--radius); padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+  .card { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; cursor: pointer; background: var(--bg); }
+  .card:hover { border-color: var(--accent); }
+  .card b { display: block; margin-bottom: 4px; }
+  .muted { color: var(--fg2); font-size: 12px; }
+  section { border-top: 1px solid var(--line); padding: 8px 0; }
+  section h2 { font-size: 14px; margin: 0 0 6px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 4px 0; }
+  .mod { display: flex; gap: 6px; align-items: baseline; }
+  .tag { font-size: 11px; color: var(--fg2); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  .file { margin-left: 18px; }
+  .file a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .error { color: var(--danger); }
+  .deadline { display: flex; justify-content: space-between; gap: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <button id="back" hidden>&larr; Courses</button>
+  <h1 id="title">Moodle</h1>
+  <button id="ask" hidden>Ask Claude</button>
+</header>
+<main id="main"><p class="muted">Loading&hellip;</p></main>
+<script>
+(() => {
+  'use strict';
+  const TOOL = 'moodle_explorer';
+  let nextId = 1;
+  const pending = new Map();
+  let current = null;
+
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, attrs = {}, ...children) => {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+      if (key === 'onclick') { node.addEventListener('click', value); } else { node.setAttribute(key, value); }
+    }
+    for (const child of children) { node.append(child instanceof Node ? child : document.createTextNode(String(child ?? ''))); }
+    return node;
+  };
+
+  function send(message) { window.parent.postMessage(message, '*'); }
+  function request(method, params) {
+    const id = nextId++;
+    send({ jsonrpc: '2.0', id, method, params });
+    return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+  }
+  function notify(method, params) { send({ jsonrpc: '2.0', method, params }); }
+
+  window.addEventListener('message', (event) => {
+    const msg = event.data;
+    if (!msg || msg.jsonrpc !== '2.0') { return; }
+    if (msg.id !== undefined && pending.has(msg.id) && !msg.method) {
+      const { resolve, reject } = pending.get(msg.id);
+      pending.delete(msg.id);
+      msg.error ? reject(new Error(msg.error.message || 'Request failed')) : resolve(msg.result);
+      return;
+    }
+    if (msg.method === 'ui/notifications/tool-result') { render(msg.params); }
+    if (msg.method === 'ui/notifications/host-context-changed') { applyTheme(msg.params); }
+    if (msg.method === 'ui/resource-teardown' && msg.id !== undefined) { send({ jsonrpc: '2.0', id: msg.id, result: {} }); }
+    if (msg.method === 'ping' && msg.id !== undefined) { send({ jsonrpc: '2.0', id: msg.id, result: {} }); }
+  });
+
+  function applyTheme(context) {
+    const vars = context && context.styles && context.styles.variables;
+    if (vars) { for (const [key, value] of Object.entries(vars)) { if (value) { document.documentElement.style.setProperty(key, value); } } }
+    if (context && context.theme) { document.documentElement.dataset.theme = context.theme; }
+  }
+
+  async function call(args) {
+    $('main').replaceChildren(el('p', { class: 'muted' }, 'Loading…'));
+    try {
+      render(await request('tools/call', { name: TOOL, arguments: args }));
+    } catch (e) {
+      $('main').replaceChildren(el('p', { class: 'error' }, e.message));
+    }
+  }
+
+  async function download(file) {
+    try {
+      const result = await request('tools/call', { name: 'file_get_download_url', arguments: { url: file.fileurl } });
+      const url = result && result.structuredContent && result.structuredContent.url;
+      if (!url) { throw new Error((result && result.content && result.content[0] && result.content[0].text) || 'No download link'); }
+      await request('ui/open-link', { url });
+    } catch (e) {
+      $('main').prepend(el('p', { class: 'error' }, e.message));
+    }
+  }
+
+  function render(result) {
+    if (!result) { return; }
+    if (result.isError) {
+      $('main').replaceChildren(el('p', { class: 'error' }, (result.content && result.content[0] && result.content[0].text) || 'Error'));
+      return;
+    }
+    const data = result.structuredContent || {};
+    current = data;
+    if (data.view === 'course') { renderCourse(data); } else { renderCourses(data); }
+    reportSize();
+  }
+
+  function renderCourses(data) {
+    $('title').textContent = 'My courses';
+    $('back').hidden = true;
+    $('ask').hidden = false;
+    const courses = data.courses || [];
+    if (!courses.length) { $('main').replaceChildren(el('p', { class: 'muted' }, 'You are not enrolled in any courses.')); return; }
+    $('main').replaceChildren(el('div', { class: 'grid' }, ...courses.map((c) => el('div', {
+      class: 'card', onclick: () => call({ view: 'course', courseid: c.id }),
+    }, el('b', {}, c.fullname), el('span', { class: 'muted' },
+      c.shortname + (c.progress !== null && c.progress !== undefined ? ` · ${Math.round(c.progress)}% complete` : ''))))));
+  }
+
+  function renderCourse(data) {
+    const course = data.course || {};
+    $('title').textContent = course.fullname || 'Course';
+    $('back').hidden = false;
+    $('ask').hidden = false;
+    const parts = [];
+    if ((data.deadlines || []).length) {
+      parts.push(el('section', {}, el('h2', {}, 'Upcoming'), el('ul', {}, ...data.deadlines.map((d) => el('li', { class: 'deadline' },
+        el('span', {}, d.name), el('span', { class: 'muted' }, new Date(d.timesort * 1000).toLocaleString())))));
+    }
+    for (const section of data.sections || []) {
+      const modules = (section.modules || []).filter((m) => m.uservisible !== false);
+      if (!modules.length && !section.summary) { continue; }
+      parts.push(el('section', {}, el('h2', {}, section.name || 'Section'), el('ul', {}, ...modules.map((m) => {
+        const files = (m.contents || []).filter((f) => f.type === 'file');
+        return el('li', {},
+          el('div', { class: 'mod' }, el('span', { class: 'tag' }, m.modname), el('span', {}, m.name)),
+          ...files.map((f) => el('div', { class: 'file' },
+            el('a', { onclick: () => download(f) }, f.filename),
+            el('span', { class: 'muted' }, ` ${(f.filesize / 1024).toFixed(0)} KB`))));
+      }))));
+    }
+    $('main').replaceChildren(...(parts.length ? parts : [el('p', { class: 'muted' }, 'Nothing visible in this course.')]));
+  }
+
+  function reportSize() {
+    requestAnimationFrame(() => notify('ui/notifications/size-changed', {
+      width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight,
+    }));
+  }
+
+  $('back').addEventListener('click', () => call({ view: 'courses' }));
+  $('ask').addEventListener('click', () => {
+    const text = current && current.view === 'course'
+      ? `Give me an overview of Moodle course ${current.course.id} (${current.course.fullname}): what's due, key activities and anything I should act on.`
+      : 'Which of my Moodle courses need my attention this week?';
+    request('ui/message', { role: 'user', content: { type: 'text', text } }).catch(() => {});
+  });
+
+  request('ui/initialize', {
+    appInfo: { name: 'Moodle Explorer', version: '1.0.0' },
+    appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] },
+    protocolVersion: '2026-01-26',
+  }).then((result) => {
+    applyTheme(result && result.hostContext);
+    notify('ui/notifications/initialized', {});
+  }).catch(() => notify('ui/notifications/initialized', {}));
+})();
+</script>
+</body>
+</html>

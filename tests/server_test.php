@@ -183,70 +183,21 @@ final class server_test extends advanced_testcase {
     }
 
     /**
-     * Test extract_token from URL parameter.
+     * Test the token is read from the Authorization header only.
      */
-    public function test_extract_token_from_url(): void {
+    public function test_extract_token_header_only(): void {
         $this->resetAfterTest(true);
-
-        $_GET['wstoken'] = 'test_token_123';
-
         $server = new server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
-
-        $reflection = new ReflectionClass($server);
-        $method = $reflection->getMethod('extract_token');
+        $method = new \ReflectionMethod($server, 'extract_token');
         $method->setAccessible(true);
 
-        $token = $method->invoke($server);
+        $_GET['wstoken'] = 'query_token';
+        $_POST['wstoken'] = 'post_token';
+        $this->assertNull($method->invoke($server));
 
-        $this->assertEquals('test_token_123', $token);
-
-        unset($_GET['wstoken']);
-    }
-
-    /**
-     * Test extract_token from POST parameter.
-     */
-    public function test_extract_token_from_post(): void {
-        $this->resetAfterTest(true);
-
-        $_POST['wstoken'] = 'test_token_456';
-
-        $server = new server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
-
-        $reflection = new ReflectionClass($server);
-        $method = $reflection->getMethod('extract_token');
-        $method->setAccessible(true);
-
-        $token = $method->invoke($server);
-
-        $this->assertEquals('test_token_456', $token);
-
-        unset($_POST['wstoken']);
-    }
-
-    /**
-     * Test generate_error method.
-     */
-    public function test_generate_error(): void {
-        $this->resetAfterTest(true);
-
-        $server = new server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
-
-        $reflection = new ReflectionClass($server);
-        $method = $reflection->getMethod('generate_error');
-        $method->setAccessible(true);
-
-        $exception = new Exception('Test error message');
-        $error = $method->invoke($server, $exception);
-
-        $this->assertIsArray($error);
-        $this->assertArrayHasKey('jsonrpc', $error);
-        $this->assertArrayHasKey('error', $error);
-        $this->assertArrayHasKey('id', $error);
-
-        $this->assertEquals('2.0', $error['jsonrpc']);
-        $this->assertArrayHasKey('code', $error['error']);
-        $this->assertArrayHasKey('message', $error['error']);
+        $_SERVER['HTTP_AUTHORIZATION'] = 'Bearer header_token';
+        $this->assertSame('header_token', $method->invoke($server));
+        unset($_GET['wstoken'], $_POST['wstoken'], $_SERVER['HTTP_AUTHORIZATION']);
     }
 
     /**

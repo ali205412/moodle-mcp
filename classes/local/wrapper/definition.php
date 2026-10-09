@@ -41,15 +41,28 @@ class definition {
      * @param array $requiredcapabilities Capabilities required to expose the tool.
      * @param array $inputschema Input schema.
      * @param array $outputschema Output schema.
+     * @param array $annotations MCP tool annotations (readOnlyHint, destructiveHint, idempotentHint, openWorldHint).
+     * @param string $title Human-readable tool title.
      */
     public function __construct(
+        /** @var string Wrapper tool name. */
         private string $name,
+        /** @var string Owning component. */
         private string $component,
+        /** @var string Domain label. */
         private string $domain,
+        /** @var string Tool description. */
         private string $description,
+        /** @var array Capabilities required to expose the tool. */
         private array $requiredcapabilities = [],
+        /** @var array Input schema. */
         private array $inputschema = ['type' => 'object', 'properties' => []],
+        /** @var array Output schema. */
         private array $outputschema = ['type' => 'object', 'properties' => []],
+        /** @var array MCP tool annotations (readOnlyHint, destructiveHint, idempotentHint, openWorldHint). */
+        private array $annotations = [],
+        /** @var string Human-readable tool title. */
+        private string $title = '',
     ) {
     }
 
@@ -67,7 +80,37 @@ class definition {
             'requiredCapabilities' => $this->requiredcapabilities,
             'inputSchema' => $this->inputschema,
             'outputSchema' => $this->outputschema,
+            'annotations' => $this->get_annotations(),
+            'title' => $this->title,
         ];
+    }
+
+    /**
+     * Return MCP annotations, defaulting to a conservative non-read-only, closed-world tool.
+     *
+     * @return array
+     */
+    public function get_annotations(): array {
+        $annotations = $this->annotations + [
+            'readOnlyHint' => false,
+            'destructiveHint' => false,
+            'idempotentHint' => false,
+            'openWorldHint' => false,
+        ];
+        if ($this->title !== '') {
+            $annotations['title'] = $this->title;
+        }
+
+        return $annotations;
+    }
+
+    /**
+     * Whether the wrapper only reads Moodle state.
+     *
+     * @return bool
+     */
+    public function is_read_only(): bool {
+        return !empty($this->get_annotations()['readOnlyHint']);
     }
 
     /**

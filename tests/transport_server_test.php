@@ -37,6 +37,8 @@ use webservice_mcp\local\oauth\service as oauth_service;
 use webservice_mcp\local\request;
 use webservice_mcp\local\transport\protocol_headers;
 
+defined('MOODLE_INTERNAL') || die();
+
 require_once(__DIR__ . '/fixtures/testable_transport_server.php');
 
 /**
@@ -100,7 +102,7 @@ final class transport_server_test extends advanced_testcase {
         global $CFG;
         $olddebug = $CFG->debug;
         $CFG->debug = DEBUG_NONE;
-        
+
         $server->run();
 
         $CFG->debug = $olddebug;
@@ -262,24 +264,23 @@ final class transport_server_test extends advanced_testcase {
             'jsonrpc' => '2.0',
             'method' => 'tools/list',
             'id' => 55,
-            'params' => ['limit' => 2],
+            'params' => [],
         ]));
 
-        $server->send_tools_list_for_test();
+        $server->dispatch_for_test();
         $payload = json_decode($server->capturedbody, true);
 
         $this->assertSame(200, $server->capturedstatus);
-        $this->assertCount(2, $payload['result']['tools']);
-        $this->assertArrayHasKey('nextCursor', $payload['result']);
-        $this->assertArrayHasKey('coverage', $payload['result']);
-        $this->assertArrayHasKey('groups', $payload['result']);
-        $this->assertNotEmpty($payload['result']['audit']['id']);
-        $this->assertArrayHasKey('eligibility', $payload['result']['tools'][0]['x-moodle']);
-        $this->assertArrayHasKey('risk', $payload['result']['tools'][0]['x-moodle']);
-        $this->assertArrayHasKey('surface', $payload['result']['tools'][0]['x-moodle']);
-        $this->assertArrayHasKey('workflow', $payload['result']['tools'][0]['x-moodle']);
-        $this->assertArrayHasKey('execution', $payload['result']['tools'][0]['x-moodle']);
-        $this->assertTrue($DB->record_exists('webservice_mcp_audit', ['auditid' => $payload['result']['audit']['id']]));
+        // Connector credentials see wrappers, file tools and apps; raw functions go through the API gateway.
+        $names = array_column($payload['result']['tools'], 'name');
+        $this->assertContains('wrapper_moodle_api_search', $names);
+        $this->assertContains('moodle_explorer', $names);
+        $this->assertArrayNotHasKey('nextCursor', $payload['result']);
+        foreach ($payload['result']['tools'] as $tool) {
+            $this->assertArrayNotHasKey('x-moodle', $tool);
+        }
+        $auditid = $payload['result']['_meta']['org.moodle/auditId'];
+        $this->assertTrue($DB->record_exists('webservice_mcp_audit', ['auditid' => $auditid]));
     }
 
     /**
@@ -334,21 +335,21 @@ final class transport_server_test extends advanced_testcase {
             'jsonrpc' => '2.0',
             'method' => 'tools/call',
             'id' => 77,
-            'params' => ['name' => 'wrapper_course_create_missing_sections'],
+            'params' => ['name' => 'wrapper_course_create_missing_sections', 'arguments' => [
+                'courseid' => $course->id,
+                'sectionnums' => [1, 2],
+            ]],
         ]));
-        $server->set_tool_call_for_test('wrapper_course_create_missing_sections', [
-            'courseid' => $course->id,
-            'sectionnums' => [1, 2],
-        ]);
 
-        $server->execute_wrapper_tool_for_test();
+        $server->dispatch_for_test();
         $payload = json_decode($server->capturedbody, true);
 
         $this->assertSame(200, $server->capturedstatus);
-        $this->assertNotEmpty($payload['result']['audit']['id']);
+        $this->assertArrayNotHasKey('isError', $payload['result']);
         $this->assertTrue($payload['result']['structuredContent']['result']['status']);
         $this->assertCount(2, $payload['result']['structuredContent']['result']['sections']);
-        $this->assertTrue($DB->record_exists('webservice_mcp_audit', ['auditid' => $payload['result']['audit']['id']]));
+        $auditid = $payload['result']['_meta']['org.moodle/auditId'];
+        $this->assertTrue($DB->record_exists('webservice_mcp_audit', ['auditid' => $auditid]));
     }
 
     /**
@@ -374,8 +375,8 @@ final class transport_server_test extends advanced_testcase {
         $this->assertSame('capability', $caperror['error']['data']['restriction']['category']);
         $this->assertSame('restricted_context', $contexterror['error']['data']['restriction']['code']);
         $this->assertSame('context', $contexterror['error']['data']['restriction']['category']);
-        $this->assertNotEmpty($caperror['error']['data']['auditId']);
-        $this->assertNotEmpty($contexterror['error']['data']['auditId']);
+        // Unauthenticated failures are never audited (anyone could grow the table).
+        $this->assertArrayNotHasKey('auditId', $caperror['error']['data']);
     }
 
     /**
@@ -461,19 +462,19 @@ final class transport_server_test extends advanced_testcase {
             'jsonrpc' => '2.0',
             'method' => 'tools/call',
             'id' => 314,
-            'params' => ['name' => 'wrapper_course_create_missing_sections'],
+            'params' => ['name' => 'wrapper_course_create_missing_sections', 'arguments' => [
+                'courseid' => $course->id,
+                'sectionnums' => [1, 2],
+            ]],
         ]));
-        $server->set_tool_call_for_test('wrapper_course_create_missing_sections', [
-            'courseid' => $course->id,
-            'sectionnums' => [1, 2],
-        ]);
 
-        $server->execute_wrapper_tool_for_test();
-        $payload = json_decode($server->capturedbody, true);
-
-        $this->assertSame(403, $server->capturedstatus);
-        $this->assertSame('mcp:write', $payload['error']['data']['requiredScope']);
-        $this->assertStringContainsString('insufficient_scope', implode("\n", $server->capturedheaders));
+        try {
+            $server->dispatch_for_test();
+            $this->fail('Write wrapper ran with a read-only token');
+        } catch (\webservice_mcp\local\mcp\protocol_exception $e) {
+            $this->assertSame(403, $e->httpstatus);
+            $this->assertSame('mcp:write', $e->data['requiredScope']);
+        }
     }
 
     /**
@@ -491,16 +492,16 @@ final class transport_server_test extends advanced_testcase {
             'jsonrpc' => '2.0',
             'id' => 1,
             'method' => 'resources/list',
-            'params' => []
+            'params' => [],
         ]));
         $server->set_transport_request_for_test([
             'sessionid' => 'test-session',
-            'mcpmethod' => 'resources/list'
+            'mcpmethod' => 'resources/list',
         ]);
-        
-        $server->handle_transport_method_for_test();
+
+        $server->dispatch_for_test();
         $payload = json_decode($server->capturedbody, true);
-        
+
         $this->assertSame(200, $server->capturedstatus);
         $this->assertArrayHasKey('resources', $payload['result']);
     }
@@ -520,18 +521,18 @@ final class transport_server_test extends advanced_testcase {
             'jsonrpc' => '2.0',
             'id' => 1,
             'method' => 'prompts/list',
-            'params' => []
+            'params' => [],
         ]));
         $server->set_transport_request_for_test([
             'sessionid' => 'test-session',
-            'mcpmethod' => 'prompts/list'
+            'mcpmethod' => 'prompts/list',
         ]);
-        
-        $server->handle_transport_method_for_test();
+
+        $server->dispatch_for_test();
         $payload = json_decode($server->capturedbody, true);
-        
+
         $this->assertSame(200, $server->capturedstatus);
         $this->assertArrayHasKey('prompts', $payload['result']);
-        $this->assertSame('system_guidance', $payload['result']['prompts'][0]['name']);
+        $this->assertContains('course_overview', array_column($payload['result']['prompts'], 'name'));
     }
 }

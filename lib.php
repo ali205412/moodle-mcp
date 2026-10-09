@@ -15,6 +15,14 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
+ * Library functions and the bundled MCP client for webservice_mcp.
+ *
+ * @package     webservice_mcp
+ * @copyright   2025 MohammadReza PourMohammad
+ * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
+/**
  * MCP web service client for testing and integration.
  *
  * This client provides a simple interface for making JSON-RPC 2.0 requests
@@ -60,39 +68,35 @@ class webservice_mcp_client {
     }
 
     /**
-     * Execute a web service request using JSON-RPC 2.0 format.
+     * Send one stateless MCP request (protocol 2026-07-28) and return the decoded response.
      *
-     * This is the core method that sends JSON-RPC requests to the server.
-     * It constructs the request, sends it via cURL, and returns the decoded response.
-     *
-     * @param string $method The method name to call.
-     * @param array $params The parameters for the method.
-     * @param int|string|null $id Optional request ID (defaults to 1).
-     * @return mixed The decoded JSON response.
+     * @param string $method MCP method.
+     * @param array $params Method params.
+     * @param int|string $id JSON-RPC id.
+     * @return array|null
      */
     public function call(string $method, array $params = [], $id = 1) {
-        $request = [
-            'jsonrpc' => '2.0',
-            'method' => $method,
-            'params' => $params,
-            'id' => $id,
+        $params['_meta'] = [
+            'io.modelcontextprotocol/protocolVersion' => '2026-07-28',
+            'io.modelcontextprotocol/clientInfo' => ['name' => 'webservice_mcp_client', 'version' => '1.0'],
+            'io.modelcontextprotocol/clientCapabilities' => new stdClass(),
         ];
+        $requestjson = json_encode(['jsonrpc' => '2.0', 'method' => $method, 'params' => $params, 'id' => $id]);
 
-        $requestjson = json_encode($request);
-
-        // Add token to URL.
-        $url = new moodle_url($this->serverurl);
-        $url->param('wstoken', $this->token);
+        $headers = [
+            'Content-Type: application/json',
+            'Accept: application/json, text/event-stream',
+            'Authorization: Bearer ' . $this->token,
+            'MCP-Protocol-Version: 2026-07-28',
+            'Mcp-Method: ' . $method,
+        ];
+        $name = $params['name'] ?? $params['uri'] ?? null;
+        if (is_string($name)) {
+            $headers[] = 'Mcp-Name: ' . (preg_match('/^[\x21-\x7E]+$/', $name) ? $name : '=?base64?' . base64_encode($name) . '?=');
+        }
 
         $curl = new curl();
-        $options = [
-            'CURLOPT_HTTPHEADER' => [
-                'Content-Type: application/json',
-                'Content-Length: ' . strlen($requestjson),
-            ],
-        ];
-
-        $result = $curl->post($url->out(false), $requestjson, $options);
+        $result = $curl->post($this->serverurl->out(false), $requestjson, ['CURLOPT_HTTPHEADER' => $headers]);
 
         return json_decode($result, true);
     }
@@ -132,6 +136,17 @@ class webservice_mcp_client {
      * @return mixed The decoded response from the initialization.
      */
     public function initialize() {
-        return $this->call('initialize', []);
+        return $this->call('server/discover', []);
     }
+}
+
+/**
+ * Add "Generate MCP keys" to Site administration > Users > Bulk user actions (Moodle 4.2/4.3).
+ *
+ * Moodle 4.4+ uses the extend_bulk_user_actions hook registered in db/hooks.php instead.
+ *
+ * @return array Action links keyed by frankenstyle identifier.
+ */
+function webservice_mcp_bulk_user_actions(): array {
+    return \webservice_mcp\hook_callbacks::bulk_user_actions();
 }

@@ -30,6 +30,8 @@ use advanced_testcase;
 use webservice_mcp\local\catalog\catalog_builder;
 use webservice_mcp\local\catalog\wrapper_registry;
 
+defined('MOODLE_INTERNAL') || die();
+
 require_once(__DIR__ . '/fixtures/testable_catalog_builder.php');
 
 /**
@@ -42,6 +44,7 @@ require_once(__DIR__ . '/fixtures/testable_catalog_builder.php');
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  * @covers      \webservice_mcp\local\catalog\catalog_builder
  * @covers      \webservice_mcp\local\catalog\wrapper_registry
+ * @covers      \webservice_mcp\local\catalog\workflow_descriptors
  */
 final class catalog_builder_test extends advanced_testcase {
     /**

@@ -34,11 +34,7 @@ class protocol_headers {
     public const DEFAULT_PROTOCOL_VERSION = '2025-03-26';
 
     /** Protocol versions accepted by the transport layer. */
-    private const SUPPORTED_PROTOCOL_VERSIONS = [
-        '2025-03-26',
-        '2025-06-18',
-        '2025-11-25',
-    ];
+    private const SUPPORTED_PROTOCOL_VERSIONS = \webservice_mcp\local\mcp\dispatcher::LEGACY_VERSIONS;
 
     /**
      * Read request headers into a lower-cased associative array.
@@ -129,14 +125,19 @@ class protocol_headers {
             return $this->error('Mcp-Method must contain only visible ASCII characters.');
         }
 
+        if ($request !== null && $mcpmethod !== $request->method) {
+            return $this->error('Mcp-Method header does not match the request method.');
+        }
+
         $initialization = $mcpmethod === 'initialize';
-        $sessionid = $this->header_value($headers, 'mcp-session-id') ?? $_GET['session_id'] ?? null;
+        $sessionid = $this->header_value($headers, 'mcp-session-id') ?? $this->query_session_id();
 
         if ($requiresession && !$initialization && $sessionid === null) {
             return $this->error('Missing required MCP-Session-Id header or session_id query parameter.');
         }
 
         $protocolversion = $this->header_value($headers, 'mcp-protocol-version');
+        $protocolversionheader = $protocolversion;
         if ($initialization) {
             if ($protocolversion !== null && !$this->is_supported_protocol_version($protocolversion)) {
                 return $this->error('Unsupported MCP-Protocol-Version header value.');
@@ -154,7 +155,7 @@ class protocol_headers {
         $bodyname = $this->request_target_name($request);
         $mcpname = $this->header_value($headers, 'mcp-name') ?? $bodyname;
         $requiresname = in_array($mcpmethod, ['tools/call', 'resources/read', 'prompts/get'], true);
-        
+
         if ($requiresname && $mcpname === null) {
             return $this->error('Missing required Mcp-Name header or JSON-RPC target name.');
         }
@@ -199,7 +200,7 @@ class protocol_headers {
             return $this->error('Unsupported MCP-Protocol-Version header value.');
         }
 
-        $sessionid = $this->header_value($headers, 'mcp-session-id') ?? $_GET['session_id'] ?? null;
+        $sessionid = $this->header_value($headers, 'mcp-session-id') ?? $this->query_session_id();
         if ($requiresession && $sessionid === null) {
             return $this->error('Missing required MCP-Session-Id header or session_id query parameter.');
         }
@@ -255,6 +256,74 @@ class protocol_headers {
             'mcpname' => null,
             'initialization' => false,
         ];
+    }
+
+    /**
+     * Validate Streamable HTTP request-metadata headers for a 2026-07-28 request.
+     *
+     * @param array $headers Lower-cased request headers.
+     * @param request $request Parsed request.
+     * @param string $metaversion Protocol version from params._meta.
+     * @return string|null Error message, or null when valid.
+     */
+    public function validate_modern(array $headers, request $request, string $metaversion): ?string {
+        $version = $this->header_value($headers, 'mcp-protocol-version');
+        if ($version === null) {
+            return 'Missing required MCP-Protocol-Version header.';
+        }
+        if ($version !== $metaversion) {
+            return "MCP-Protocol-Version header '{$version}' does not match _meta protocol version '{$metaversion}'.";
+        }
+
+        $method = $this->header_value($headers, 'mcp-method');
+        if ($request->id !== null || $method !== null) {
+            if ($method === null) {
+                return 'Missing required Mcp-Method header.';
+            }
+            if ($method !== $request->method) {
+                return "Mcp-Method header '{$method}' does not match body method '{$request->method}'.";
+            }
+        }
+
+        if (in_array($request->method, ['tools/call', 'resources/read', 'prompts/get'], true)) {
+            $name = $this->header_value($headers, 'mcp-name');
+            if ($name === null) {
+                return 'Missing required Mcp-Name header.';
+            }
+            $decoded = $this->decode_header_value($name);
+            if ($decoded === null) {
+                return 'Mcp-Name header contains invalid characters.';
+            }
+            if ($decoded !== $this->request_target_name($request)) {
+                return 'Mcp-Name header does not match the request target.';
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Decode a header value that may use the =?base64?...?= sentinel encoding.
+     *
+     * @param string $value Raw header value.
+     * @return string|null Decoded value, or null when invalid.
+     */
+    private function decode_header_value(string $value): ?string {
+        if (preg_match('/^=\?base64\?([A-Za-z0-9+\/=]*)\?=$/', $value, $matches)) {
+            $decoded = base64_decode($matches[1], true);
+            return ($decoded === false || !mb_check_encoding($decoded, 'UTF-8')) ? null : $decoded;
+        }
+        return $this->is_visible_ascii(str_replace(' ', '', $value)) || $value === '' ? $value : null;
+    }
+
+    /**
+     * Read the legacy session_id query parameter safely.
+     *
+     * @return string|null
+     */
+    private function query_session_id(): ?string {
+        $value = $_GET['session_id'] ?? null;
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     /**

@@ -34,7 +34,7 @@ define('NO_DEBUG_DISPLAY', true);
 // Mark this as a web service server script.
 define('WS_SERVER', true);
 
-require('../../config.php');
+require('../../config.php'); // phpcs:ignore moodle.Files.RequireLogin.Missing -- bearer-token endpoint (WS_SERVER).
 
 // Check if the MCP protocol is enabled.
 if (!webservice_protocol_is_enabled('mcp')) {
@@ -47,6 +47,25 @@ if (!webservice_protocol_is_enabled('mcp')) {
 }
 
 // Instantiate and run the MCP transport server.
+// Public MCP Server Card at server.php/server-card (no authentication, no user data).
+if (($_SERVER['PATH_INFO'] ?? '') === '/server-card' && in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['GET', 'HEAD'], true)) {
+    $card = json_encode(\webservice_mcp\local\mcp\server_card::build(), JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    $etag = '"' . sha1($card) . '"';
+    header('Content-Type: ' . \webservice_mcp\local\mcp\server_card::MEDIATYPE);
+    header('Cache-Control: public, max-age=3600');
+    header('ETag: ' . $etag);
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: GET');
+    header('Access-Control-Allow-Headers: Content-Type, If-None-Match');
+    header('Access-Control-Expose-Headers: ETag');
+    if (trim($_SERVER['HTTP_IF_NONE_MATCH'] ?? '') === $etag) {
+        http_response_code(304);
+    } else if ($_SERVER['REQUEST_METHOD'] !== 'HEAD') {
+        echo $card;
+    }
+    die;
+}
+
 $server = new \webservice_mcp\local\transport\server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
 $server->run();
 die;

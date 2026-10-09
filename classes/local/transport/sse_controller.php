@@ -84,7 +84,7 @@ class sse_controller extends server {
 
             $sessionid = $this->transportrequest['sessionid'];
             if ($sessionid === null) {
-                $sessionid = $this->create_transport_session();
+                $sessionid = $this->create_transport_session([], true);
                 $this->transportrequest['sessionid'] = $sessionid;
             }
 

@@ -56,22 +56,13 @@ class eligibility_resolver {
         $reasons = [];
         $resolvedcapabilities = [];
         $deferredcapabilities = [];
+        $missingcapabilities = [];
 
         if (($entry['transport']['loginrequired'] ?? true) && empty($user?->id)) {
             $visible = false;
             $reasons[] = [
                 'code' => 'login_required',
                 'message' => 'This tool requires an authenticated Moodle user session.',
-            ];
-        }
-
-        $risk = $options['risk'] ?? ['level' => 'low'];
-        $showhighrisktools = $this->show_high_risk_tools($options['site_policy'] ?? []);
-        if (!$showhighrisktools && in_array($risk['level'], ['high', 'critical'], true)) {
-            $visible = false;
-            $reasons[] = [
-                'code' => 'site_policy_hidden',
-                'message' => 'The current site policy hides high-risk tools from discovery.',
             ];
         }
 
@@ -88,17 +79,17 @@ class eligibility_resolver {
             }
 
             $resolvedcapabilities[] = $capability;
+            // Declared capabilities are often "may use", not "requires", so they only inform; Moodle's own
+            // require_capability() inside the function is the real boundary.
             if ($user !== null && !\has_capability($capability, $restrictedcontext, $user)) {
-                $visible = false;
-                $reasons[] = [
-                    'code' => 'missing_capability',
-                    'message' => 'The current user does not have the required capability for this tool in the restricted context.',
-                    'capability' => $capability,
-                ];
+                $missingcapabilities[] = $capability;
             }
         }
 
-        $accesstools = $this->access_information_tools($entry, $snapshotentries);
+        $accesstools = $this->access_information_tools(
+            $entry,
+            $options['access_index'] ?? $this->build_access_index($snapshotentries)
+        );
         $calltimechecks = ['context'];
         if ($deferredcapabilities !== []) {
             $calltimechecks[] = 'capability';
@@ -112,13 +103,12 @@ class eligibility_resolver {
             'status' => $visible ? 'visible' : 'hidden',
             'reasons' => $reasons,
             'callTimeChecks' => array_values(array_unique($calltimechecks)),
+            'likelyPermitted' => $missingcapabilities === [],
+            'missingCapabilities' => $missingcapabilities,
             'resolvedCapabilities' => $resolvedcapabilities,
             'deferredCapabilities' => array_values(array_unique($deferredcapabilities)),
             'accessInformationTools' => $accesstools,
             'connectorMode' => (string)($options['connector_mode'] ?? 'default'),
-            'sitePolicy' => [
-                'showHighRiskTools' => $showhighrisktools,
-            ],
         ];
     }
 
@@ -152,35 +142,75 @@ class eligibility_resolver {
     }
 
     /**
-     * Find same-component access-information tools that can help the client refine eligibility.
+     * Evaluate a list of entries and keep only those visible to the user.
      *
-     * @param array $entry Catalog entry.
-     * @param array $snapshotentries Full catalog entries.
+     * Visible entries are returned with their 'risk' and 'eligibility' metadata attached. This is the single
+     * visibility rule shared by tools/list and the API search/describe/execute wrappers. Only login hides an entry;
+     * risk and declared capabilities are informational (eligibility likelyPermitted / missingCapabilities).
+     *
+     * @param array $entries Catalog entries to evaluate.
+     * @param context $restrictedcontext Restricted context for the current transport/user.
+     * @param stdClass|null $user Current user.
+     * @param array $options Evaluation options (connector_mode, snapshot_entries).
      * @return array
      */
-    private function access_information_tools(array $entry, array $snapshotentries): array {
-        $tools = [];
+    public function filter_visible(array $entries, context $restrictedcontext, ?stdClass $user, array $options = []): array {
+        $riskanalyzer = new risk_analyzer();
+        $accessindex = $this->build_access_index($options['snapshot_entries'] ?? $entries);
 
+        $visible = [];
+        foreach ($entries as $key => $entry) {
+            $eligibility = $this->evaluate($entry, $restrictedcontext, $user, [], [
+                'connector_mode' => $options['connector_mode'] ?? 'default',
+                'access_index' => $accessindex,
+            ]);
+            if (!$eligibility['visible']) {
+                continue;
+            }
+
+            $entry['risk'] = $riskanalyzer->analyze($entry);
+            $entry['eligibility'] = $eligibility;
+            $visible[$key] = $entry;
+        }
+
+        return $visible;
+    }
+
+    /**
+     * Index access-information helper tools by component so lookups are O(1) per entry.
+     *
+     * @param array $snapshotentries Catalog entries.
+     * @return array Component => sorted tool names.
+     */
+    public function build_access_index(array $snapshotentries): array {
+        $index = [];
         foreach ($snapshotentries as $candidate) {
-            if (($candidate['component'] ?? '') !== ($entry['component'] ?? '')) {
-                continue;
-            }
-
             $name = (string)($candidate['name'] ?? '');
-            if ($name === '' || $name === ($entry['name'] ?? '')) {
-                continue;
-            }
-
-            if (
-                preg_match('/_get_.*access_information$/', $name) === 1 ||
-                preg_match('/_get_access_information$/', $name) === 1
-            ) {
-                $tools[] = $name;
+            if ($name !== '' && preg_match('/_get_.*access_information$/', $name) === 1) {
+                $index[(string)($candidate['component'] ?? '')][$name] = $name;
             }
         }
 
-        sort($tools);
-        return array_values(array_unique($tools));
+        foreach ($index as &$names) {
+            sort($names);
+        }
+        unset($names);
+
+        return $index;
+    }
+
+    /**
+     * Find same-component access-information tools that can help the client refine eligibility.
+     *
+     * @param array $entry Catalog entry.
+     * @param array $accessindex Index from build_access_index().
+     * @return array
+     */
+    private function access_information_tools(array $entry, array $accessindex): array {
+        $name = (string)($entry['name'] ?? '');
+        $tools = $accessindex[(string)($entry['component'] ?? '')] ?? [];
+
+        return array_values(array_filter($tools, static fn(string $tool): bool => $tool !== $name));
     }
 
     /**
@@ -200,20 +230,5 @@ class eligibility_resolver {
         }
 
         return $boundaries;
-    }
-
-    /**
-     * Resolve the high-risk discovery site policy.
-     *
-     * @param array $sitepolicy Optional override policy.
-     * @return bool
-     */
-    private function show_high_risk_tools(array $sitepolicy): bool {
-        if (array_key_exists('showHighRiskTools', $sitepolicy)) {
-            return (bool)$sitepolicy['showHighRiskTools'];
-        }
-
-        $configured = \get_config('webservice_mcp', 'showhighrisktools');
-        return $configured === false ? true : (bool)$configured;
     }
 }

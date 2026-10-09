@@ -21,8 +21,6 @@ use context_system;
 use stdClass;
 use webservice_mcp\local\auth\credential_manager;
 
-defined('MOODLE_INTERNAL') || die();
-
 /**
  * Tests for connector credential lifecycle handling.
  *
@@ -195,5 +193,52 @@ final class credential_manager_test extends advanced_testcase {
         $this->assertSame('mcp_test_client', (string)$storedaccess->oauthclientid);
         $this->assertSame(credential_manager::TOKEN_TYPE_REFRESH, (int)$storedrefresh->tokentype);
         $this->assertSame('mcp_test_client', (string)$storedrefresh->oauthclientid);
+    }
+
+    /**
+     * Test only a hash of the token is stored and lookups work by plaintext.
+     */
+    public function test_tokens_are_stored_hashed(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+
+        $user = $this->getDataGenerator()->create_user();
+        $manager = new credential_manager();
+        $credential = $manager->issue_durable_grant($this->create_service_stub(), $user->id, context_system::instance());
+
+        $stored = $DB->get_record('webservice_mcp_credential', ['id' => $credential->id], '*', MUST_EXIST);
+        $this->assertNotSame($credential->token, $stored->token);
+        $this->assertSame(credential_manager::hash_token($credential->token), $stored->token);
+        $this->assertNotNull($manager->resolve_credential($credential->token));
+        $this->assertNull($manager->resolve_credential($stored->token));
+    }
+
+    /**
+     * Test a credential IP restriction is enforced at resolve time.
+     */
+    public function test_resolve_enforces_ip_restriction(): void {
+        $this->resetAfterTest(true);
+
+        $user = $this->getDataGenerator()->create_user();
+        $manager = new credential_manager();
+        $credential = $manager->issue_durable_grant($this->create_service_stub(), $user->id, context_system::instance(), [
+            'iprestriction' => '10.0.0.0/8',
+        ]);
+
+        $originaladdr = $_SERVER['REMOTE_ADDR'] ?? null;
+        try {
+            $_SERVER['REMOTE_ADDR'] = '192.0.2.10';
+            $this->assertNull($manager->resolve_credential($credential->token));
+
+            $_SERVER['REMOTE_ADDR'] = '10.1.2.3';
+            $this->assertNotNull($manager->resolve_credential($credential->token));
+        } finally {
+            if ($originaladdr === null) {
+                unset($_SERVER['REMOTE_ADDR']);
+            } else {
+                $_SERVER['REMOTE_ADDR'] = $originaladdr;
+            }
+        }
     }
 }

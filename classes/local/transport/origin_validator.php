@@ -18,8 +18,6 @@ declare(strict_types=1);
 
 namespace webservice_mcp\local\transport;
 
-use moodle_url;
-
 /**
  * Validate Origins for browser-facing transport endpoints.
  *
@@ -46,6 +44,9 @@ class origin_validator {
         }
 
         $origin = $this->normalize_origin($origin);
+        if ($origin === '') {
+            return false;
+        }
         $siteorigin = $this->normalize_origin($CFG->wwwroot);
         if ($origin === $siteorigin) {
             return true;
@@ -92,7 +93,10 @@ class origin_validator {
             if ($part === '') {
                 continue;
             }
-            $origins[] = $this->normalize_origin($part);
+            $normalised = $this->normalize_origin($part);
+            if ($normalised !== '') {
+                $origins[] = $normalised;
+            }
         }
 
         return array_values(array_unique($origins));
@@ -105,11 +109,12 @@ class origin_validator {
      * @return string
      */
     private function normalize_origin(string $origin): string {
-        $url = new moodle_url($origin);
-        $scheme = $url->get_scheme();
-        $host = $url->get_host();
-        $port = $url->get_port();
-
-        return empty($port) ? "{$scheme}://{$host}" : "{$scheme}://{$host}:{$port}";
+        // Malformed or opaque origins ("null", "*") normalise to '' and never match.
+        $parts = parse_url(trim($origin));
+        if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            return '';
+        }
+        $origin = strtolower($parts['scheme']) . '://' . strtolower($parts['host']);
+        return empty($parts['port']) ? $origin : $origin . ':' . $parts['port'];
     }
 }

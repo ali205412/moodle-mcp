@@ -33,6 +33,8 @@ use webservice_mcp\local\auth\credential_manager;
 use webservice_mcp\local\auth\transport_identity;
 use webservice_mcp\local\transport\protocol_headers;
 
+defined('MOODLE_INTERNAL') || die();
+
 require_once(__DIR__ . '/fixtures/testable_sse_controller.php');
 
 /**
@@ -139,7 +141,7 @@ final class sse_transport_test extends advanced_testcase {
         $previousget = $_GET;
         $previousserver = $_SERVER;
 
-        $_GET['wstoken'] = $credential->token;
+        $_SERVER['HTTP_AUTHORIZATION'] = 'Bearer ' . $credential->token;
         $_SERVER['REQUEST_METHOD'] = 'GET';
         $_SERVER['HTTP_MCP_SESSION_ID'] = $sessionid;
         $_SERVER['HTTP_MCP_PROTOCOL_VERSION'] = protocol_headers::DEFAULT_PROTOCOL_VERSION;
@@ -151,7 +153,10 @@ final class sse_transport_test extends advanced_testcase {
 
         $this->assertTrue($controller->authcalled);
         $this->assertSame(200, $controller->capturedstatus);
-        $this->assertStringContainsString('Content-Type: text/event-stream; charset=utf-8', implode("\n", $controller->capturedheaders));
+        $this->assertStringContainsString(
+            'Content-Type: text/event-stream; charset=utf-8',
+            implode("\n", $controller->capturedheaders)
+        );
         $this->assertStringContainsString('event: message', $controller->capturedbody);
         $this->assertStringContainsString('id: 1', $controller->capturedbody);
         $this->assertStringContainsString('"result":{"ok":true}', $controller->capturedbody);

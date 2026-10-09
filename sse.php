@@ -27,7 +27,7 @@
 define('NO_DEBUG_DISPLAY', true);
 define('WS_SERVER', true);
 
-require('../../config.php');
+require('../../config.php'); // phpcs:ignore moodle.Files.RequireLogin.Missing -- bearer-token endpoint (WS_SERVER).
 
 if (!webservice_protocol_is_enabled('mcp')) {
     header("HTTP/1.0 403 Forbidden");

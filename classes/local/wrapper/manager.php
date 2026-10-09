@@ -19,6 +19,7 @@ declare(strict_types=1);
 namespace webservice_mcp\local\wrapper;
 
 use context;
+use core_external\external_api;
 use stdClass;
 
 /**
@@ -79,7 +80,7 @@ class manager {
         ?activity_service $activityservice = null,
         ?discovery_service $discoveryservice = null
     ) {
-        $this->definitions = $includedefaults ? array_merge(self::default_definitions(), $definitions) : $definitions;
+        $this->definitions = $includedefaults ? array_merge(builtin_definitions::all(), $definitions) : $definitions;
         $this->courseauthoringservice = $courseauthoringservice ?? new course_authoring_service();
         $this->questionbankservice = $questionbankservice ?? new question_bank_service();
         $this->gradebookservice = $gradebookservice ?? new gradebook_service();
@@ -115,15 +116,22 @@ class manager {
     }
 
     /**
-     * Determine whether the named wrapper mutates Moodle state.
+     * Determine whether a wrapper call mutates Moodle state.
+     *
+     * Read-only wrappers are those whose definition declares readOnlyHint; wrapper_moodle_api_execute is
+     * mutating unless the target external function is declared type "read".
      *
      * @param string $name Tool name.
+     * @param array $arguments Tool arguments.
      * @return bool
      */
-    public function is_mutating(string $name): bool {
-        return !in_array($name, [
-            'wrapper_question_preview_question',
-        ], true);
+    public function is_mutating(string $name, array $arguments = []): bool {
+        if ($name === 'wrapper_moodle_api_execute') {
+            return discovery_service::function_type(arguments::text($arguments, 'functionname')) !== 'read';
+        }
+
+        $definition = $this->find($name);
+        return $definition === null || !$definition->is_read_only();
     }
 
     /**
@@ -149,1176 +157,292 @@ class manager {
     /**
      * Execute a discoverable wrapper.
      *
+     * Failures are thrown as exceptions (usually moodle_exception) for the transport to report as tool errors.
+     *
      * @param string $name Tool name.
      * @param array $arguments Tool arguments.
      * @param context $restrictedcontext Current restricted context.
      * @param stdClass|null $user Current user.
+     * @param int|null $serviceid Connector external service id scoping wrapper_moodle_api_* tools.
      * @return array
      */
-    public function execute(string $name, array $arguments, context $restrictedcontext, ?stdClass $user = null): array {
+    public function execute(
+        string $name,
+        array $arguments,
+        context $restrictedcontext,
+        ?stdClass $user = null,
+        ?int $serviceid = null
+    ): array {
         $definition = $this->find($name);
         if ($definition === null || !$definition->can_discover($restrictedcontext, $user)) {
             throw new \moodle_exception('invalidparameter');
         }
 
-        return match ($name) {
-            'wrapper_course_add_section_after' => $this->courseauthoringservice->add_section_after(
-                (int)($arguments['courseid'] ?? 0),
-                isset($arguments['targetsectionid']) ? (int)$arguments['targetsectionid'] : null
-            ),
-            'wrapper_course_set_section_visibility' => $this->courseauthoringservice->set_section_visibility(
-                (int)($arguments['courseid'] ?? 0),
-                is_array($arguments['sectionids'] ?? null) ? $arguments['sectionids'] : [],
-                (bool)($arguments['visible'] ?? false)
-            ),
-            'wrapper_course_delete_sections' => $this->courseauthoringservice->delete_sections(
-                (int)($arguments['courseid'] ?? 0),
-                is_array($arguments['sectionids'] ?? null) ? $arguments['sectionids'] : []
-            ),
-            'wrapper_course_create_missing_sections' => $this->courseauthoringservice->create_missing_sections(
-                (int)($arguments['courseid'] ?? 0),
-                is_array($arguments['sectionnums'] ?? null) ? $arguments['sectionnums'] : []
-            ),
-            'wrapper_course_move_module' => $this->courseauthoringservice->move_modules(
-                (int)($arguments['courseid'] ?? 0),
-                is_array($arguments['cmids'] ?? null) ? $arguments['cmids'] : [],
-                isset($arguments['targetsectionid']) ? (int)$arguments['targetsectionid'] : null,
-                isset($arguments['targetcmid']) ? (int)$arguments['targetcmid'] : null
-            ),
-            'wrapper_course_move_section_after' => $this->courseauthoringservice->move_sections_after(
-                (int)($arguments['courseid'] ?? 0),
-                is_array($arguments['sectionids'] ?? null) ? $arguments['sectionids'] : [],
-                (int)($arguments['targetsectionid'] ?? 0)
-            ),
-            'wrapper_course_set_module_visibility' => $this->courseauthoringservice->set_module_visibility(
-                (int)($arguments['courseid'] ?? 0),
-                is_array($arguments['cmids'] ?? null) ? $arguments['cmids'] : [],
-                (string)($arguments['visibility'] ?? '')
-            ),
-            'wrapper_course_duplicate_modules' => $this->courseauthoringservice->duplicate_modules(
-                (int)($arguments['courseid'] ?? 0),
-                is_array($arguments['cmids'] ?? null) ? $arguments['cmids'] : [],
-                isset($arguments['targetsectionid']) ? (int)$arguments['targetsectionid'] : null,
-                isset($arguments['targetcmid']) ? (int)$arguments['targetcmid'] : null
-            ),
-            'wrapper_course_delete_modules' => $this->courseauthoringservice->delete_modules(
-                (int)($arguments['courseid'] ?? 0),
-                is_array($arguments['cmids'] ?? null) ? $arguments['cmids'] : []
-            ),
-            'wrapper_question_create_category' => $this->questionbankservice->create_category(
-                (int)($arguments['contextid'] ?? 0),
-                (string)($arguments['name'] ?? ''),
-                isset($arguments['parentcategoryid']) ? (int)$arguments['parentcategoryid'] : null,
-                (string)($arguments['info'] ?? ''),
-                (int)($arguments['infoformat'] ?? FORMAT_HTML),
-                isset($arguments['idnumber']) ? (string)$arguments['idnumber'] : null
-            ),
-            'wrapper_question_update_category' => $this->questionbankservice->update_category(
-                (int)($arguments['categoryid'] ?? 0),
-                (string)($arguments['name'] ?? ''),
-                (string)($arguments['info'] ?? ''),
-                (int)($arguments['infoformat'] ?? FORMAT_HTML),
-                isset($arguments['parentcategoryid']) ? (int)$arguments['parentcategoryid'] : null,
-                isset($arguments['idnumber']) ? (string)$arguments['idnumber'] : null
-            ),
-            'wrapper_question_delete_category' => $this->questionbankservice->delete_category(
-                (int)($arguments['categoryid'] ?? 0),
-                isset($arguments['movequestionstocategoryid']) ? (int)$arguments['movequestionstocategoryid'] : null
-            ),
-            'wrapper_question_move_questions' => $this->questionbankservice->move_questions(
-                is_array($arguments['questionids'] ?? null) ? $arguments['questionids'] : [],
-                (int)($arguments['targetcategoryid'] ?? 0)
-            ),
-            'wrapper_question_delete_questions' => $this->questionbankservice->delete_questions(
-                is_array($arguments['questionids'] ?? null) ? $arguments['questionids'] : []
-            ),
-            'wrapper_question_create_question' => $this->questionbankservice->create_question(
-                (int)($arguments['categoryid'] ?? 0),
-                is_array($arguments['payload'] ?? null) ? $arguments['payload'] : []
-            ),
-            'wrapper_question_update_question' => $this->questionbankservice->update_question(
-                (int)($arguments['questionid'] ?? 0),
-                is_array($arguments['payload'] ?? null) ? $arguments['payload'] : []
-            ),
-            'wrapper_question_preview_question' => $this->questionbankservice->preview_question(
-                (int)($arguments['questionid'] ?? 0)
-            ),
-            'wrapper_question_import_questions' => $this->questionbankservice->import_questions(
-                (int)($arguments['categoryid'] ?? 0),
-                (string)($arguments['format'] ?? ''),
-                (string)($arguments['content'] ?? ''),
-                (bool)($arguments['catfromfile'] ?? false),
-                (bool)($arguments['contextfromfile'] ?? false)
-            ),
-            'wrapper_gradebook_create_manual_item' => $this->gradebookservice->create_manual_item(
-                (int)($arguments['courseid'] ?? 0),
-                is_array($arguments['payload'] ?? null) ? $arguments['payload'] : []
-            ),
-            'wrapper_gradebook_update_manual_item' => $this->gradebookservice->update_manual_item(
-                (int)($arguments['courseid'] ?? 0),
-                (int)($arguments['itemid'] ?? 0),
-                is_array($arguments['payload'] ?? null) ? $arguments['payload'] : []
-            ),
-            'wrapper_gradebook_move_item' => $this->gradebookservice->move_item(
-                (int)($arguments['courseid'] ?? 0),
-                (int)($arguments['itemid'] ?? 0),
-                isset($arguments['parentcategoryid']) ? (int)$arguments['parentcategoryid'] : null,
-                isset($arguments['afteritemid']) ? (int)$arguments['afteritemid'] : null
-            ),
-            'wrapper_gradebook_delete_items' => $this->gradebookservice->delete_items(
-                (int)($arguments['courseid'] ?? 0),
-                is_array($arguments['itemids'] ?? null) ? $arguments['itemids'] : []
-            ),
-            'wrapper_gradebook_update_category' => $this->gradebookservice->update_category(
-                (int)($arguments['courseid'] ?? 0),
-                (int)($arguments['categoryid'] ?? 0),
-                is_array($arguments['payload'] ?? null) ? $arguments['payload'] : []
-            ),
-            'wrapper_gradebook_move_category' => $this->gradebookservice->move_category(
-                (int)($arguments['courseid'] ?? 0),
-                (int)($arguments['categoryid'] ?? 0),
-                isset($arguments['parentcategoryid']) ? (int)$arguments['parentcategoryid'] : null,
-                isset($arguments['aftercategoryid']) ? (int)$arguments['aftercategoryid'] : null,
-                isset($arguments['afteritemid']) ? (int)$arguments['afteritemid'] : null
-            ),
-            'wrapper_gradebook_delete_categories' => $this->gradebookservice->delete_categories(
-                (int)($arguments['courseid'] ?? 0),
-                is_array($arguments['categoryids'] ?? null) ? $arguments['categoryids'] : []
-            ),
-            'wrapper_badge_create_badge' => $this->badgeservice->create_badge(
-                is_array($arguments['payload'] ?? null) ? $arguments['payload'] : [],
-                isset($arguments['courseid']) ? (int)$arguments['courseid'] : null
-            ),
-            'wrapper_badge_update_badge' => $this->badgeservice->update_badge(
-                (int)($arguments['badgeid'] ?? 0),
-                is_array($arguments['payload'] ?? null) ? $arguments['payload'] : []
-            ),
-            'wrapper_badge_update_badge_message' => $this->badgeservice->update_badge_message(
-                (int)($arguments['badgeid'] ?? 0),
-                is_array($arguments['payload'] ?? null) ? $arguments['payload'] : []
-            ),
-            'wrapper_badge_delete_badges' => $this->badgeservice->delete_badges(
-                is_array($arguments['badgeids'] ?? null) ? $arguments['badgeids'] : [],
-                (bool)($arguments['archive'] ?? true)
-            ),
-            'wrapper_badge_duplicate_badge' => $this->badgeservice->duplicate_badge(
-                (int)($arguments['badgeid'] ?? 0)
-            ),
-            'wrapper_badge_add_related_badges' => $this->badgeservice->add_related_badges(
-                (int)($arguments['badgeid'] ?? 0),
-                is_array($arguments['relatedbadgeids'] ?? null) ? $arguments['relatedbadgeids'] : []
-            ),
-            'wrapper_badge_delete_related_badges' => $this->badgeservice->delete_related_badges(
-                (int)($arguments['badgeid'] ?? 0),
-                is_array($arguments['relatedbadgeids'] ?? null) ? $arguments['relatedbadgeids'] : []
-            ),
-            'wrapper_badge_save_alignment' => $this->badgeservice->save_alignment(
-                (int)($arguments['badgeid'] ?? 0),
-                is_array($arguments['payload'] ?? null) ? $arguments['payload'] : [],
-                isset($arguments['alignmentid']) ? (int)$arguments['alignmentid'] : null
-            ),
-            'wrapper_badge_delete_alignments' => $this->badgeservice->delete_alignments(
-                (int)($arguments['badgeid'] ?? 0),
-                is_array($arguments['alignmentids'] ?? null) ? $arguments['alignmentids'] : []
-            ),
-            'wrapper_badge_award_badge' => $this->badgeservice->award_badge(
-                (int)($arguments['badgeid'] ?? 0),
-                (int)($arguments['recipientid'] ?? 0),
-                isset($arguments['issuerroleid']) ? (int)$arguments['issuerroleid'] : null
-            ),
-            'wrapper_badge_revoke_badge' => $this->badgeservice->revoke_badge(
-                (int)($arguments['badgeid'] ?? 0),
-                (int)($arguments['recipientid'] ?? 0),
-                isset($arguments['issuerroleid']) ? (int)$arguments['issuerroleid'] : null
-            ),
-            'wrapper_memory_write' => $this->memoryservice->write_memory(
-                (string)($arguments['content'] ?? '')
-            ),
-            'wrapper_course_add_module' => $this->activityservice->add_module(
-                (int)($arguments['courseid'] ?? 0),
-                (string)($arguments['modulename'] ?? ''),
-                (string)($arguments['name'] ?? ''),
-                is_array($arguments['options'] ?? null) ? $arguments['options'] : []
-            ),
-            'wrapper_module_read_data' => $this->activityservice->read_module_data(
-                (int)($arguments['cmid'] ?? 0),
-                (string)($arguments['action'] ?? '')
-            ),
-            'wrapper_moodle_api_search' => $this->discoveryservice->search_api(
-                (string)($arguments['query'] ?? '')
-            ),
-            'wrapper_moodle_api_execute' => $this->discoveryservice->execute_api(
-                (string)($arguments['functionname'] ?? ''),
-                is_array($arguments['params'] ?? null) ? $arguments['params'] : []
-            ),
-            default => throw new \moodle_exception('invalidparameter'),
-        };
+        // Every wrapper validates its target context against this restriction, as native web service calls do.
+        external_api::set_context_restriction($restrictedcontext);
+
+        $depth = self::transaction_depth();
+        try {
+            return $this->dispatch($name, $arguments, $restrictedcontext, $user, $serviceid);
+        } catch (\Throwable $exception) {
+            // A wrapper that failed mid-transaction must not leave the connection in a half-open transaction. Only
+            // roll back when the wrapper opened one itself; an outer transaction (none in a web service request)
+            // belongs to the caller.
+            if (self::transaction_depth() > $depth) {
+                \abort_all_db_transactions();
+            }
+            throw $exception;
+        }
     }
 
     /**
-     * Return built-in wrapper definitions.
+     * Number of open database transactions (moodle_database keeps the stack protected).
      *
+     * @return int
+     */
+    private static function transaction_depth(): int {
+        global $DB;
+
+        // phpcs:ignore Squiz.Scope.StaticThisUsage.Found -- $this is $DB: the closure is bound to it by call().
+        return (fn(): int => count($this->transactions))->call($DB);
+    }
+
+    /**
+     * Route a wrapper call to its service.
+     *
+     * @param string $name Tool name.
+     * @param array $a Tool arguments.
+     * @param context $restrictedcontext Current restricted context.
+     * @param stdClass|null $user Current user.
+     * @param int|null $serviceid Connector external service id.
      * @return array
      */
-    private static function default_definitions(): array {
-        return [
-            new definition(
-                'wrapper_course_add_section_after',
-                'webservice_mcp',
-                'operator',
-                'Add a new course section, optionally after another section.',
-                ['moodle/course:update'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'targetsectionid' => ['type' => 'number'],
-                    ],
-                    'required' => ['courseid'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'status' => ['type' => 'boolean'],
-                        'statejson' => ['type' => 'string'],
-                    ],
-                ],
+    private function dispatch(string $name, array $a, context $restrictedcontext, ?stdClass $user, ?int $serviceid): array {
+        return match ($name) {
+            'wrapper_course_add_section_after' => $this->courseauthoringservice->add_section_after(
+                arguments::integer($a, 'courseid'),
+                arguments::optional_integer($a, 'targetsectionid')
             ),
-            new definition(
-                'wrapper_course_set_section_visibility',
-                'webservice_mcp',
-                'operator',
-                'Show or hide one or more course sections with structured course-state updates.',
-                ['moodle/course:update', 'moodle/course:sectionvisibility'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'sectionids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                        'visible' => ['type' => 'boolean'],
-                    ],
-                    'required' => ['courseid', 'sectionids', 'visible'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'status' => ['type' => 'boolean'],
-                        'action' => ['type' => 'string'],
-                        'statejson' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_course_set_section_visibility' => $this->courseauthoringservice->set_section_visibility(
+                arguments::integer($a, 'courseid'),
+                arguments::values($a, 'sectionids'),
+                arguments::flag($a, 'visible')
             ),
-            new definition(
-                'wrapper_course_delete_sections',
-                'webservice_mcp',
-                'operator',
-                'Delete one or more course sections and return structured state updates.',
-                ['moodle/course:update', 'moodle/course:movesections'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'sectionids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                    'required' => ['courseid', 'sectionids'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'status' => ['type' => 'boolean'],
-                        'statejson' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_course_delete_sections' => $this->courseauthoringservice->delete_sections(
+                arguments::integer($a, 'courseid'),
+                arguments::values($a, 'sectionids')
             ),
-            new definition(
-                'wrapper_course_create_missing_sections',
-                'webservice_mcp',
-                'operator',
-                'Ensure one or more course sections exist, creating missing sections when needed.',
-                ['moodle/course:update', 'moodle/course:manageactivities'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'sectionnums' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                    'required' => ['courseid', 'sectionnums'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'status' => ['type' => 'boolean'],
-                        'created' => ['type' => 'boolean'],
-                    ],
-                ],
+            'wrapper_course_create_missing_sections' => $this->courseauthoringservice->create_missing_sections(
+                arguments::integer($a, 'courseid'),
+                arguments::values($a, 'sectionnums')
             ),
-            new definition(
-                'wrapper_course_move_module',
-                'webservice_mcp',
-                'operator',
-                'Move one or more existing course modules to a target section or before another module.',
-                ['moodle/course:manageactivities'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'cmids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                        'targetsectionid' => ['type' => 'number'],
-                        'targetcmid' => ['type' => 'number'],
-                    ],
-                    'required' => ['courseid', 'cmids'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'status' => ['type' => 'boolean'],
-                        'statejson' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_course_move_module' => $this->courseauthoringservice->move_modules(
+                arguments::integer($a, 'courseid'),
+                arguments::values($a, 'cmids'),
+                arguments::optional_integer($a, 'targetsectionid'),
+                arguments::optional_integer($a, 'targetcmid')
             ),
-            new definition(
-                'wrapper_course_move_section_after',
-                'webservice_mcp',
-                'operator',
-                'Move one or more course sections after another target section.',
-                ['moodle/course:movesections'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'sectionids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                        'targetsectionid' => ['type' => 'number'],
-                    ],
-                    'required' => ['courseid', 'sectionids', 'targetsectionid'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'status' => ['type' => 'boolean'],
-                        'statejson' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_course_move_section_after' => $this->courseauthoringservice->move_sections_after(
+                arguments::integer($a, 'courseid'),
+                arguments::values($a, 'sectionids'),
+                arguments::integer($a, 'targetsectionid')
             ),
-            new definition(
-                'wrapper_course_set_module_visibility',
-                'webservice_mcp',
-                'operator',
-                'Show, hide, or stealth one or more course modules with structured state updates.',
-                ['moodle/course:activityvisibility'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'cmids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                        'visibility' => [
-                            'type' => 'string',
-                            'enum' => ['show', 'hide', 'stealth'],
-                        ],
-                    ],
-                    'required' => ['courseid', 'cmids', 'visibility'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'status' => ['type' => 'boolean'],
-                        'action' => ['type' => 'string'],
-                        'statejson' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_course_set_module_visibility' => $this->courseauthoringservice->set_module_visibility(
+                arguments::integer($a, 'courseid'),
+                arguments::values($a, 'cmids'),
+                arguments::text($a, 'visibility')
             ),
-            new definition(
-                'wrapper_course_duplicate_modules',
-                'webservice_mcp',
-                'operator',
-                'Duplicate one or more course modules with optional placement controls.',
-                ['moodle/backup:backuptargetimport', 'moodle/restore:restoretargetimport'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'cmids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                        'targetsectionid' => ['type' => 'number'],
-                        'targetcmid' => ['type' => 'number'],
-                    ],
-                    'required' => ['courseid', 'cmids'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'status' => ['type' => 'boolean'],
-                        'statejson' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_course_duplicate_modules' => $this->courseauthoringservice->duplicate_modules(
+                arguments::integer($a, 'courseid'),
+                arguments::values($a, 'cmids'),
+                arguments::optional_integer($a, 'targetsectionid'),
+                arguments::optional_integer($a, 'targetcmid')
             ),
-            new definition(
-                'wrapper_course_delete_modules',
-                'webservice_mcp',
-                'operator',
-                'Delete one or more course modules and return structured state updates.',
-                ['moodle/course:manageactivities'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'cmids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                    'required' => ['courseid', 'cmids'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'status' => ['type' => 'boolean'],
-                        'statejson' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_course_delete_modules' => $this->courseauthoringservice->delete_modules(
+                arguments::integer($a, 'courseid'),
+                arguments::values($a, 'cmids')
             ),
-            new definition(
-                'wrapper_question_create_category',
-                'webservice_mcp',
-                'operator',
-                'Create a question-bank category in a Moodle context.',
-                ['moodle/question:managecategory'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'contextid' => ['type' => 'number'],
-                        'name' => ['type' => 'string'],
-                        'parentcategoryid' => ['type' => 'number'],
-                        'info' => ['type' => 'string'],
-                        'infoformat' => ['type' => 'number'],
-                        'idnumber' => ['type' => 'string'],
-                    ],
-                    'required' => ['contextid', 'name'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'categoryid' => ['type' => 'number'],
-                        'contextid' => ['type' => 'number'],
-                        'parentcategoryid' => ['type' => 'number'],
-                        'name' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_question_create_category' => $this->questionbankservice->create_category(
+                arguments::integer($a, 'contextid'),
+                arguments::text($a, 'name'),
+                arguments::optional_integer($a, 'parentcategoryid'),
+                arguments::text($a, 'info'),
+                arguments::integer($a, 'infoformat', (int)FORMAT_HTML),
+                arguments::optional_text($a, 'idnumber')
             ),
-            new definition(
-                'wrapper_question_update_category',
-                'webservice_mcp',
-                'operator',
-                'Update a question-bank category, including optional context moves.',
-                ['moodle/question:managecategory'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'categoryid' => ['type' => 'number'],
-                        'name' => ['type' => 'string'],
-                        'info' => ['type' => 'string'],
-                        'infoformat' => ['type' => 'number'],
-                        'parentcategoryid' => ['type' => 'number'],
-                        'idnumber' => ['type' => 'string'],
-                    ],
-                    'required' => ['categoryid', 'name'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'categoryid' => ['type' => 'number'],
-                        'contextid' => ['type' => 'number'],
-                        'parentcategoryid' => ['type' => 'number'],
-                        'name' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_question_update_category' => $this->questionbankservice->update_category(
+                arguments::integer($a, 'categoryid'),
+                arguments::text($a, 'name'),
+                arguments::text($a, 'info'),
+                arguments::integer($a, 'infoformat', (int)FORMAT_HTML),
+                arguments::optional_integer($a, 'parentcategoryid'),
+                arguments::optional_text($a, 'idnumber')
             ),
-            new definition(
-                'wrapper_question_delete_category',
-                'webservice_mcp',
-                'operator',
-                'Delete a question-bank category, optionally moving remaining questions first.',
-                ['moodle/question:managecategory'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'categoryid' => ['type' => 'number'],
-                        'movequestionstocategoryid' => ['type' => 'number'],
-                    ],
-                    'required' => ['categoryid'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'deleted' => ['type' => 'boolean'],
-                        'categoryid' => ['type' => 'number'],
-                    ],
-                ],
+            'wrapper_question_delete_category' => $this->questionbankservice->delete_category(
+                arguments::integer($a, 'categoryid'),
+                arguments::optional_integer($a, 'movequestionstocategoryid')
             ),
-            new definition(
-                'wrapper_question_move_questions',
-                'webservice_mcp',
-                'operator',
-                'Move authored questions to another question-bank category.',
-                [],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'questionids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                        'targetcategoryid' => ['type' => 'number'],
-                    ],
-                    'required' => ['questionids', 'targetcategoryid'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'moved' => ['type' => 'boolean'],
-                        'targetcategoryid' => ['type' => 'number'],
-                    ],
-                ],
+            'wrapper_question_move_questions' => $this->questionbankservice->move_questions(
+                arguments::values($a, 'questionids'),
+                arguments::integer($a, 'targetcategoryid')
             ),
-            new definition(
-                'wrapper_question_delete_questions',
-                'webservice_mcp',
-                'operator',
-                'Delete authored questions by question id.',
-                [],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'questionids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                    'required' => ['questionids'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'deleted' => ['type' => 'boolean'],
-                        'questionids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                ],
+            'wrapper_question_delete_questions' => $this->questionbankservice->delete_questions(
+                arguments::values($a, 'questionids')
             ),
-            new definition(
-                'wrapper_question_create_question',
-                'webservice_mcp',
-                'operator',
-                'Create a supported authored question version in a question-bank category.',
-                ['moodle/question:add'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'categoryid' => ['type' => 'number'],
-                        'payload' => [
-                            'type' => 'object',
-                            'properties' => [
-                                'qtype' => ['type' => 'string', 'enum' => ['shortanswer', 'truefalse', 'essay', 'description']],
-                                'name' => ['type' => 'string'],
-                                'questiontext' => ['type' => 'string'],
-                                'generalfeedback' => ['type' => 'string'],
-                                'defaultmark' => ['type' => 'number'],
-                            ],
-                        ],
-                    ],
-                    'required' => ['categoryid', 'payload'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'questionid' => ['type' => 'number'],
-                        'questionbankentryid' => ['type' => 'number'],
-                        'version' => ['type' => 'number'],
-                        'qtype' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_question_create_question' => $this->questionbankservice->create_question(
+                arguments::integer($a, 'categoryid'),
+                arguments::values($a, 'payload')
             ),
-            new definition(
-                'wrapper_question_update_question',
-                'webservice_mcp',
-                'operator',
-                'Create a new version of a supported authored question.',
-                [],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'questionid' => ['type' => 'number'],
-                        'payload' => ['type' => 'object'],
-                    ],
-                    'required' => ['questionid', 'payload'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'questionid' => ['type' => 'number'],
-                        'previousquestionid' => ['type' => 'number'],
-                        'version' => ['type' => 'number'],
-                        'qtype' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_question_update_question' => $this->questionbankservice->update_question(
+                arguments::integer($a, 'questionid'),
+                arguments::values($a, 'payload')
             ),
-            new definition(
-                'wrapper_question_preview_question',
-                'webservice_mcp',
-                'operator',
-                'Return Moodle’s native preview URL for an authored question.',
-                [],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'questionid' => ['type' => 'number'],
-                    ],
-                    'required' => ['questionid'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'questionid' => ['type' => 'number'],
-                        'previewurl' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_question_preview_question' => $this->questionbankservice->preview_question(
+                arguments::integer($a, 'questionid')
             ),
-            new definition(
-                'wrapper_question_import_questions',
-                'webservice_mcp',
-                'operator',
-                'Import questions into a category from supported Moodle formats.',
-                ['moodle/question:add'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'categoryid' => ['type' => 'number'],
-                        'format' => ['type' => 'string', 'enum' => ['gift', 'xml']],
-                        'content' => ['type' => 'string'],
-                        'catfromfile' => ['type' => 'boolean'],
-                        'contextfromfile' => ['type' => 'boolean'],
-                    ],
-                    'required' => ['categoryid', 'format', 'content'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'status' => ['type' => 'boolean'],
-                        'format' => ['type' => 'string'],
-                        'categoryid' => ['type' => 'number'],
-                    ],
-                ],
+            'wrapper_question_import_questions' => $this->questionbankservice->import_questions(
+                arguments::integer($a, 'categoryid'),
+                arguments::text($a, 'format'),
+                arguments::text($a, 'content'),
+                arguments::flag($a, 'catfromfile'),
+                arguments::flag($a, 'contextfromfile')
             ),
-            new definition(
-                'wrapper_gradebook_create_manual_item',
-                'webservice_mcp',
-                'operator',
-                'Create a manual gradebook item using Moodle’s gradebook setup rules.',
-                ['moodle/grade:manage'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'payload' => ['type' => 'object'],
-                    ],
-                    'required' => ['courseid', 'payload'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'itemid' => ['type' => 'number'],
-                        'courseid' => ['type' => 'number'],
-                        'itemname' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_gradebook_create_manual_item' => $this->gradebookservice->create_manual_item(
+                arguments::integer($a, 'courseid'),
+                arguments::values($a, 'payload')
             ),
-            new definition(
-                'wrapper_gradebook_update_manual_item',
-                'webservice_mcp',
-                'operator',
-                'Update a manual gradebook item using Moodle’s gradebook setup rules.',
-                ['moodle/grade:manage'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'itemid' => ['type' => 'number'],
-                        'payload' => ['type' => 'object'],
-                    ],
-                    'required' => ['courseid', 'itemid', 'payload'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'itemid' => ['type' => 'number'],
-                        'courseid' => ['type' => 'number'],
-                        'itemname' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_gradebook_update_manual_item' => $this->gradebookservice->update_manual_item(
+                arguments::integer($a, 'courseid'),
+                arguments::integer($a, 'itemid'),
+                arguments::values($a, 'payload')
             ),
-            new definition(
-                'wrapper_gradebook_move_item',
-                'webservice_mcp',
-                'operator',
-                'Move a manual gradebook item to another category or position.',
-                ['moodle/grade:manage'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'itemid' => ['type' => 'number'],
-                        'parentcategoryid' => ['type' => 'number'],
-                        'afteritemid' => ['type' => 'number'],
-                    ],
-                    'required' => ['courseid', 'itemid'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'itemid' => ['type' => 'number'],
-                        'parentcategoryid' => ['type' => 'number'],
-                        'sortorder' => ['type' => 'number'],
-                    ],
-                ],
+            'wrapper_gradebook_move_item' => $this->gradebookservice->move_item(
+                arguments::integer($a, 'courseid'),
+                arguments::integer($a, 'itemid'),
+                arguments::optional_integer($a, 'parentcategoryid'),
+                arguments::optional_integer($a, 'afteritemid')
             ),
-            new definition(
-                'wrapper_gradebook_delete_items',
-                'webservice_mcp',
-                'operator',
-                'Delete manual gradebook items.',
-                ['moodle/grade:manage'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'itemids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                    'required' => ['courseid', 'itemids'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'deleted' => ['type' => 'boolean'],
-                        'itemids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                ],
+            'wrapper_gradebook_delete_items' => $this->gradebookservice->delete_items(
+                arguments::integer($a, 'courseid'),
+                arguments::values($a, 'itemids')
             ),
-            new definition(
-                'wrapper_gradebook_update_category',
-                'webservice_mcp',
-                'operator',
-                'Update a gradebook category using Moodle’s grade edit tree.',
-                ['moodle/grade:manage'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'categoryid' => ['type' => 'number'],
-                        'payload' => ['type' => 'object'],
-                    ],
-                    'required' => ['courseid', 'categoryid', 'payload'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'categoryid' => ['type' => 'number'],
-                        'courseid' => ['type' => 'number'],
-                        'name' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_gradebook_update_category' => $this->gradebookservice->update_category(
+                arguments::integer($a, 'courseid'),
+                arguments::integer($a, 'categoryid'),
+                arguments::values($a, 'payload')
             ),
-            new definition(
-                'wrapper_gradebook_move_category',
-                'webservice_mcp',
-                'operator',
-                'Move a gradebook category to another parent or sort position.',
-                ['moodle/grade:manage'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'categoryid' => ['type' => 'number'],
-                        'parentcategoryid' => ['type' => 'number'],
-                        'aftercategoryid' => ['type' => 'number'],
-                        'afteritemid' => ['type' => 'number'],
-                    ],
-                    'required' => ['courseid', 'categoryid'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'categoryid' => ['type' => 'number'],
-                        'parentcategoryid' => ['type' => 'number'],
-                        'sortorder' => ['type' => 'number'],
-                    ],
-                ],
+            'wrapper_gradebook_move_category' => $this->gradebookservice->move_category(
+                arguments::integer($a, 'courseid'),
+                arguments::integer($a, 'categoryid'),
+                arguments::optional_integer($a, 'parentcategoryid'),
+                arguments::optional_integer($a, 'aftercategoryid'),
+                arguments::optional_integer($a, 'afteritemid')
             ),
-            new definition(
-                'wrapper_gradebook_delete_categories',
-                'webservice_mcp',
-                'operator',
-                'Delete gradebook categories.',
-                ['moodle/grade:manage'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'categoryids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                    'required' => ['courseid', 'categoryids'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'deleted' => ['type' => 'boolean'],
-                        'categoryids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                ],
+            'wrapper_gradebook_delete_categories' => $this->gradebookservice->delete_categories(
+                arguments::integer($a, 'courseid'),
+                arguments::values($a, 'categoryids')
             ),
-            new definition(
-                'wrapper_badge_create_badge',
-                'webservice_mcp',
-                'operator',
-                'Create a site or course badge through Moodle’s native badge model.',
-                ['moodle/badges:createbadge'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'payload' => ['type' => 'object'],
-                    ],
-                    'required' => ['payload'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'name' => ['type' => 'string'],
-                        'status' => ['type' => 'number'],
-                    ],
-                ],
+            'wrapper_badge_create_badge' => $this->badgeservice->create_badge(
+                arguments::values($a, 'payload'),
+                arguments::optional_integer($a, 'courseid')
             ),
-            new definition(
-                'wrapper_badge_update_badge',
-                'webservice_mcp',
-                'operator',
-                'Update badge details through Moodle’s native badge model.',
-                ['moodle/badges:configuredetails'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'payload' => ['type' => 'object'],
-                    ],
-                    'required' => ['badgeid', 'payload'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'name' => ['type' => 'string'],
-                        'status' => ['type' => 'number'],
-                    ],
-                ],
+            'wrapper_badge_update_badge' => $this->badgeservice->update_badge(
+                arguments::integer($a, 'badgeid'),
+                arguments::values($a, 'payload')
             ),
-            new definition(
-                'wrapper_badge_update_badge_message',
-                'webservice_mcp',
-                'operator',
-                'Update badge award-message settings.',
-                ['moodle/badges:configuremessages'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'payload' => ['type' => 'object'],
-                    ],
-                    'required' => ['badgeid', 'payload'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'status' => ['type' => 'number'],
-                    ],
-                ],
+            'wrapper_badge_update_badge_message' => $this->badgeservice->update_badge_message(
+                arguments::integer($a, 'badgeid'),
+                arguments::values($a, 'payload')
             ),
-            new definition(
-                'wrapper_badge_delete_badges',
-                'webservice_mcp',
-                'operator',
-                'Delete badges through Moodle’s native badge model.',
-                ['moodle/badges:deletebadge'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                        'archive' => ['type' => 'boolean'],
-                    ],
-                    'required' => ['badgeids'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'deleted' => ['type' => 'boolean'],
-                        'badgeids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                ],
+            'wrapper_badge_delete_badges' => $this->badgeservice->delete_badges(
+                arguments::values($a, 'badgeids'),
+                arguments::flag($a, 'archive', true)
             ),
-            new definition(
-                'wrapper_badge_duplicate_badge',
-                'webservice_mcp',
-                'operator',
-                'Duplicate a badge into a new inactive copy.',
-                ['moodle/badges:createbadge', 'moodle/badges:configuredetails'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                    ],
-                    'required' => ['badgeid'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'name' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_badge_duplicate_badge' => $this->badgeservice->duplicate_badge(
+                arguments::integer($a, 'badgeid')
             ),
-            new definition(
-                'wrapper_badge_add_related_badges',
-                'webservice_mcp',
-                'operator',
-                'Attach related badges to a badge.',
-                ['moodle/badges:configuredetails'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'relatedbadgeids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                    'required' => ['badgeid', 'relatedbadgeids'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'status' => ['type' => 'boolean'],
-                    ],
-                ],
+            'wrapper_badge_add_related_badges' => $this->badgeservice->add_related_badges(
+                arguments::integer($a, 'badgeid'),
+                arguments::values($a, 'relatedbadgeids')
             ),
-            new definition(
-                'wrapper_badge_delete_related_badges',
-                'webservice_mcp',
-                'operator',
-                'Remove related-badge links from a badge.',
-                ['moodle/badges:configuredetails'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'relatedbadgeids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                    'required' => ['badgeid', 'relatedbadgeids'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'status' => ['type' => 'boolean'],
-                    ],
-                ],
+            'wrapper_badge_delete_related_badges' => $this->badgeservice->delete_related_badges(
+                arguments::integer($a, 'badgeid'),
+                arguments::values($a, 'relatedbadgeids')
             ),
-            new definition(
-                'wrapper_badge_save_alignment',
-                'webservice_mcp',
-                'operator',
-                'Create or update a badge alignment record.',
-                ['moodle/badges:configuredetails'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'alignmentid' => ['type' => 'number'],
-                        'payload' => ['type' => 'object'],
-                    ],
-                    'required' => ['badgeid', 'payload'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'alignmentid' => ['type' => 'number'],
-                        'status' => ['type' => 'boolean'],
-                    ],
-                ],
+            'wrapper_badge_save_alignment' => $this->badgeservice->save_alignment(
+                arguments::integer($a, 'badgeid'),
+                arguments::values($a, 'payload'),
+                arguments::optional_integer($a, 'alignmentid')
             ),
-            new definition(
-                'wrapper_badge_delete_alignments',
-                'webservice_mcp',
-                'operator',
-                'Delete badge alignment records.',
-                ['moodle/badges:configuredetails'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'alignmentids' => ['type' => 'array', 'items' => ['type' => 'number']],
-                    ],
-                    'required' => ['badgeid', 'alignmentids'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'status' => ['type' => 'boolean'],
-                    ],
-                ],
+            'wrapper_badge_delete_alignments' => $this->badgeservice->delete_alignments(
+                arguments::integer($a, 'badgeid'),
+                arguments::values($a, 'alignmentids')
             ),
-            new definition(
-                'wrapper_badge_award_badge',
-                'webservice_mcp',
-                'operator',
-                'Manually award a badge to a user.',
-                ['moodle/badges:awardbadge'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'recipientid' => ['type' => 'number'],
-                        'issuerroleid' => ['type' => 'number'],
-                    ],
-                    'required' => ['badgeid', 'recipientid'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'recipientid' => ['type' => 'number'],
-                        'awarded' => ['type' => 'boolean'],
-                        'issued' => ['type' => 'boolean'],
-                    ],
-                ],
+            'wrapper_badge_award_badge' => $this->badgeservice->award_badge(
+                arguments::integer($a, 'badgeid'),
+                arguments::integer($a, 'recipientid'),
+                arguments::optional_integer($a, 'issuerroleid')
             ),
-            new definition(
-                'wrapper_badge_revoke_badge',
-                'webservice_mcp',
-                'operator',
-                'Manually revoke a badge from a user.',
-                ['moodle/badges:revokebadge'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'recipientid' => ['type' => 'number'],
-                        'issuerroleid' => ['type' => 'number'],
-                    ],
-                    'required' => ['badgeid', 'recipientid'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'badgeid' => ['type' => 'number'],
-                        'recipientid' => ['type' => 'number'],
-                        'revoked' => ['type' => 'boolean'],
-                    ],
-                ],
+            'wrapper_badge_revoke_badge' => $this->badgeservice->revoke_badge(
+                arguments::integer($a, 'badgeid'),
+                arguments::integer($a, 'recipientid'),
+                arguments::optional_integer($a, 'issuerroleid')
             ),
-            new definition(
-                'wrapper_memory_write',
-                'webservice_mcp',
-                'operator',
-                'Write persistent memory scoped to the current user.',
-                [],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'content' => ['type' => 'string'],
-                    ],
-                    'required' => ['content'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'id' => ['type' => 'number'],
-                        'userid' => ['type' => 'number'],
-                        'content' => ['type' => 'string'],
-                        'timecreated' => ['type' => 'number'],
-                    ],
-                ],
+            'wrapper_memory_write' => $this->memoryservice->write_memory(
+                arguments::text($a, 'content')
             ),
-            new definition(
-                'wrapper_course_add_module',
-                'webservice_mcp',
-                'operator',
-                'Add an activity module to a course.',
-                ['moodle/course:manageactivities'],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'courseid' => ['type' => 'number'],
-                        'modulename' => ['type' => 'string'],
-                        'name' => ['type' => 'string'],
-                        'options' => ['type' => 'object'],
-                    ],
-                    'required' => ['courseid', 'modulename', 'name'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'coursemodule' => ['type' => 'number'],
-                    ],
-                ],
+            'wrapper_memory_read' => isset($a['id'])
+                ? ['memories' => [$this->memoryservice->read_memory_by_id(arguments::integer($a, 'id'))], 'total' => 1]
+                : $this->memoryservice->read_memories(
+                    arguments::integer($a, 'limit', memory_service::DEFAULT_LIMIT),
+                    arguments::integer($a, 'offset')
+                ),
+            'wrapper_memory_update' => $this->memoryservice->update_memory(
+                arguments::integer($a, 'id'),
+                arguments::text($a, 'content')
             ),
-            new definition(
-                'wrapper_module_read_data',
-                'webservice_mcp',
-                'operator',
-                'Read structural data from a module.',
-                [],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'cmid' => ['type' => 'number'],
-                        'action' => ['type' => 'string'],
-                    ],
-                    'required' => ['cmid', 'action'],
-                ],
-                [
-                    'type' => 'array',
-                    'items' => ['type' => 'object'],
-                ],
+            'wrapper_memory_delete' => $this->memoryservice->delete_memory(
+                arguments::integer($a, 'id')
             ),
-            new definition(
-                'wrapper_moodle_api_search',
-                'webservice_mcp',
-                'operator',
-                'Search for Moodle core API functions.',
-                [],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'query' => ['type' => 'string'],
-                    ],
-                    'required' => ['query'],
-                ],
-                [
-                    'type' => 'array',
-                    'items' => ['type' => 'object'],
-                ],
+            'wrapper_course_add_module' => $this->activityservice->add_module(
+                arguments::integer($a, 'courseid'),
+                arguments::text($a, 'modulename'),
+                arguments::text($a, 'name'),
+                arguments::values($a, 'options'),
+                arguments::integer($a, 'section'),
+                arguments::flag($a, 'visible', true),
+                arguments::text($a, 'intro'),
+                arguments::integer($a, 'introformat', (int)FORMAT_HTML)
             ),
-            new definition(
-                'wrapper_moodle_api_execute',
-                'webservice_mcp',
-                'operator',
-                'Dynamically execute a Moodle core API function.',
-                [],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'functionname' => ['type' => 'string'],
-                        'params' => ['type' => 'object'],
-                    ],
-                    'required' => ['functionname', 'params'],
-                ],
-                [
-                    'type' => 'object',
-                    'properties' => [
-                        'status' => ['type' => 'string'],
-                        'data' => ['type' => 'object'],
-                        'message' => ['type' => 'string'],
-                    ],
-                ],
+            'wrapper_module_read_data' => $this->activityservice->read_module_data(
+                arguments::integer($a, 'cmid')
             ),
-        ];
+            'wrapper_moodle_api_search' => $this->discoveryservice->search_api(
+                arguments::text($a, 'query'),
+                arguments::integer($a, 'limit', discovery_service::DEFAULT_SEARCH_LIMIT),
+                $restrictedcontext,
+                $user,
+                $serviceid,
+                arguments::text($a, 'component'),
+                arguments::text($a, 'type')
+            ),
+            'wrapper_moodle_api_describe' => $this->discoveryservice->describe_api(
+                array_merge(
+                    arguments::values($a, 'functionnames'),
+                    isset($a['functionname']) ? [arguments::text($a, 'functionname')] : []
+                ),
+                $restrictedcontext,
+                $user,
+                $serviceid
+            ),
+            'wrapper_moodle_api_execute' => $this->discoveryservice->execute_api(
+                arguments::text($a, 'functionname'),
+                arguments::values($a, 'params'),
+                $restrictedcontext,
+                $user,
+                $serviceid
+            ),
+            default => throw new \moodle_exception('invalidparameter'),
+        };
     }
 }

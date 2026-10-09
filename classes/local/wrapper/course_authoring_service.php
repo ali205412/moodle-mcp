@@ -282,7 +282,9 @@ class course_authoring_service {
      * @return stdClass
      */
     private function get_course(int $courseid): stdClass {
-        global $DB;
+        global $CFG, $DB;
+        // Every public method loads its course first; course/lib.php provides course_get_format() and friends.
+        require_once($CFG->dirroot . '/course/lib.php');
         return $DB->get_record('course', ['id' => $courseid], '*', MUST_EXIST);
     }
 

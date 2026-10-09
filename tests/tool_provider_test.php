@@ -39,6 +39,7 @@ require_once($CFG->dirroot . '/webservice/tests/helpers.php');
  * @link        https://onbir.dev
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  * @covers      \webservice_mcp\local\tool_provider
+ * @covers      \webservice_mcp\local\catalog\tool_metadata
  */
 final class tool_provider_test extends externallib_advanced_testcase {
     /**
@@ -97,9 +98,9 @@ final class tool_provider_test extends externallib_advanced_testcase {
 
         $schema = $method->invoke(null, $param);
 
-        $this->assertEquals('string', $schema['type']);
+        $this->assertEquals(['string', 'null'], $schema['type']);
         $this->assertEquals('Test parameter', $schema['description']);
-        $this->assertTrue($schema['_required']);
+        $this->assertArrayNotHasKey('_required', $schema);
     }
 
     /**
@@ -116,7 +117,7 @@ final class tool_provider_test extends externallib_advanced_testcase {
 
         $schema = $method->invoke(null, $param);
 
-        $this->assertEquals('number', $schema['type']);
+        $this->assertEquals(['integer', 'null'], $schema['type']);
         $this->assertEquals('Test integer', $schema['description']);
         $this->assertArrayNotHasKey('_required', $schema);
     }
@@ -127,7 +128,7 @@ final class tool_provider_test extends externallib_advanced_testcase {
     public function test_generate_schema_float(): void {
         $this->resetAfterTest(true);
 
-        $param = new external_value(PARAM_FLOAT, 'Test float');
+        $param = new external_value(PARAM_FLOAT, 'Test float', VALUE_REQUIRED, null, NULL_NOT_ALLOWED);
 
         $reflection = new ReflectionClass(tool_provider::class);
         $method = $reflection->getMethod('generate_schema');
@@ -144,7 +145,7 @@ final class tool_provider_test extends externallib_advanced_testcase {
     public function test_generate_schema_boolean(): void {
         $this->resetAfterTest(true);
 
-        $param = new external_value(PARAM_BOOL, 'Test boolean');
+        $param = new external_value(PARAM_BOOL, 'Test boolean', VALUE_REQUIRED, null, NULL_NOT_ALLOWED);
 
         $reflection = new ReflectionClass(tool_provider::class);
         $method = $reflection->getMethod('generate_schema');
@@ -179,9 +180,10 @@ final class tool_provider_test extends externallib_advanced_testcase {
         $this->assertArrayHasKey('age', $schema['properties']);
         $this->assertArrayHasKey('active', $schema['properties']);
 
-        $this->assertEquals('string', $schema['properties']['name']['type']);
-        $this->assertEquals('number', $schema['properties']['age']['type']);
-        $this->assertEquals('boolean', $schema['properties']['active']['type']);
+        $this->assertEquals(['string', 'null'], $schema['properties']['name']['type']);
+        $this->assertEquals(['integer', 'null'], $schema['properties']['age']['type']);
+        $this->assertEquals(['boolean', 'null'], $schema['properties']['active']['type']);
+        $this->assertFalse($schema['additionalProperties']);
 
         $this->assertArrayHasKey('required', $schema);
         $this->assertContains('name', $schema['required']);
@@ -207,7 +209,7 @@ final class tool_provider_test extends externallib_advanced_testcase {
 
         $this->assertEquals('array', $schema['type']);
         $this->assertArrayHasKey('items', $schema);
-        $this->assertEquals('string', $schema['items']['type']);
+        $this->assertEquals(['string', 'null'], $schema['items']['type']);
     }
 
     /**
@@ -265,7 +267,7 @@ final class tool_provider_test extends externallib_advanced_testcase {
         $method->setAccessible(true);
 
         $this->assertEquals('string', $method->invoke(null, new external_value(PARAM_TEXT)));
-        $this->assertEquals('number', $method->invoke(null, new external_value(PARAM_INT)));
+        $this->assertEquals('integer', $method->invoke(null, new external_value(PARAM_INT)));
         $this->assertEquals('number', $method->invoke(null, new external_value(PARAM_FLOAT)));
         $this->assertEquals('boolean', $method->invoke(null, new external_value(PARAM_BOOL)));
         $this->assertEquals('object', $method->invoke(null, new external_single_structure([])));
@@ -419,9 +421,9 @@ final class tool_provider_test extends externallib_advanced_testcase {
     }
 
     /**
-     * Test explicit system-level capability checks can hide tools at discovery time.
+     * Test missing declared capabilities never hide a tool; they only mark it as not likely permitted.
      */
-    public function test_list_tools_hides_tools_when_explicit_system_capability_is_missing(): void {
+    public function test_list_tools_marks_missing_declared_capabilities(): void {
         $this->resetAfterTest(true);
 
         $user = $this->getDataGenerator()->create_user();
@@ -436,26 +438,31 @@ final class tool_provider_test extends externallib_advanced_testcase {
             ]
         );
 
-        $this->assertSame([], array_column($result['tools'], 'name'));
+        $tools = array_column($result['tools'], null, 'name');
+        $this->assertArrayHasKey('mod_lti_get_tool_proxies', $tools);
+        $this->assertFalse($tools['mod_lti_get_tool_proxies']['x-moodle']['likelyPermitted']);
+        $this->assertNotEmpty($tools['mod_lti_get_tool_proxies']['x-moodle']['eligibility']['missingCapabilities']);
 
         $coverage = array_column($result['coverage'], null, 'domain');
         $this->assertArrayHasKey('activity', $coverage);
-        $this->assertSame(0, $coverage['activity']['visibleTools']);
+        $this->assertSame(1, $coverage['activity']['visibleTools']);
     }
 
     /**
-     * Test high-risk discovery policy can hide risky tools.
+     * Test risk is informational only: high-risk tools stay listed whatever the legacy showhighrisktools setting says.
      */
-    public function test_list_tools_respects_high_risk_site_policy(): void {
+    public function test_list_tools_never_hides_high_risk_tools(): void {
         $this->resetAfterTest(true);
         $this->setAdminUser();
 
         set_config('showhighrisktools', 0, 'webservice_mcp');
         $serviceid = $this->create_test_service(['core_course_delete_courses']);
 
-        $result = tool_provider::list_tools_for_service_ids([$serviceid]);
+        $tools = array_column(tool_provider::list_tools_for_service_ids([$serviceid])['tools'], null, 'name');
 
-        $this->assertSame([], array_column($result['tools'], 'name'));
+        $this->assertArrayHasKey('core_course_delete_courses', $tools);
+        $this->assertContains($tools['core_course_delete_courses']['x-moodle']['risk']['level'], ['high', 'critical']);
+        $this->assertTrue($tools['core_course_delete_courses']['annotations']['destructiveHint']);
     }
 
     /**
@@ -542,17 +549,26 @@ final class tool_provider_test extends externallib_advanced_testcase {
 
         $this->assertSame('activity', $tools['mod_assign_get_assignments']['x-moodle']['surface']['surface']);
         $this->assertSame('assignments', $tools['mod_assign_get_assignments']['x-moodle']['surface']['area']);
-        $this->assertSame('workflow_assignment_submission', $tools['mod_assign_start_submission']['x-moodle']['workflow'][0]['name']);
+        $this->assertSame(
+            'workflow_assignment_submission',
+            $tools['mod_assign_start_submission']['x-moodle']['workflow'][0]['name']
+        );
 
         $this->assertSame('forums', $tools['mod_forum_add_discussion']['x-moodle']['surface']['area']);
-        $this->assertContains('mod_forum_get_forum_access_information', $tools['mod_forum_add_discussion']['x-moodle']['eligibility']['accessInformationTools']);
+        $this->assertContains(
+            'mod_forum_get_forum_access_information',
+            $tools['mod_forum_add_discussion']['x-moodle']['eligibility']['accessInformationTools']
+        );
         $this->assertSame('workflow_forum_participation', $tools['mod_forum_add_discussion']['x-moodle']['workflow'][0]['name']);
 
         $this->assertSame('quizzes', $tools['mod_quiz_start_attempt']['x-moodle']['surface']['area']);
         $this->assertSame('workflow_quiz_attempt', $tools['mod_quiz_start_attempt']['x-moodle']['workflow'][0]['name']);
 
         $this->assertSame('choice', $tools['mod_choice_submit_choice_response']['x-moodle']['surface']['area']);
-        $this->assertSame('workflow_choice_response', $tools['mod_choice_submit_choice_response']['x-moodle']['workflow'][0]['name']);
+        $this->assertSame(
+            'workflow_choice_response',
+            $tools['mod_choice_submit_choice_response']['x-moodle']['workflow'][0]['name']
+        );
 
         $this->assertSame('wiki', $tools['mod_wiki_edit_page']['x-moodle']['surface']['area']);
         $this->assertSame('workflow_wiki_collaboration', $tools['mod_wiki_edit_page']['x-moodle']['workflow'][0]['name']);
@@ -822,5 +838,121 @@ final class tool_provider_test extends externallib_advanced_testcase {
         $this->assertSame('question_bank', $tools['wrapper_question_create_question']['x-moodle']['surface']['area']);
         $this->assertSame('gradebook', $tools['wrapper_gradebook_create_manual_item']['x-moodle']['surface']['area']);
         $this->assertSame('badges', $tools['wrapper_badge_create_badge']['x-moodle']['surface']['area']);
+    }
+
+    /**
+     * Test connector mode lists only wrappers, with consistent groups/coverage and explicit annotations.
+     */
+    public function test_list_tools_wrapper_mode_is_consistent(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+
+        $serviceid = $this->create_test_service(['core_webservice_get_site_info']);
+        $options = [
+            'allow_wrappers' => true,
+            'restrictedcontext' => context_system::instance(),
+        ];
+        $result = tool_provider::list_tools_for_service_ids([$serviceid], $options);
+        $tools = array_column($result['tools'], null, 'name');
+
+        $this->assertArrayNotHasKey('core_webservice_get_site_info', $tools);
+        $this->assertSame(['operator'], array_column($result['groups'], 'id'));
+        $this->assertSame(count($result['tools']), $result['groups'][0]['count']);
+        $this->assertSame([0], array_values(array_unique(array_column($result['coverage'], 'visibleTools'))));
+
+        $search = $tools['wrapper_moodle_api_search'];
+        $this->assertTrue($search['annotations']['readOnlyHint']);
+        $this->assertSame('read', $search['x-moodle']['mutability']);
+        $this->assertNotEmpty($search['title']);
+        $this->assertTrue($tools['wrapper_moodle_api_execute']['annotations']['destructiveHint']);
+        $this->assertArrayHasKey('wrapper_moodle_api_describe', $tools);
+
+        $filtered = tool_provider::list_tools_for_service_ids([$serviceid], $options + ['group' => 'core']);
+        $this->assertSame([], $filtered['tools']);
+    }
+
+    /**
+     * Test native tool schemas use integer ids and nest output under result.
+     */
+    public function test_list_tools_native_schemas_use_integer_types(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+
+        $serviceid = $this->create_test_service(['core_course_get_contents']);
+        $tools = array_column(tool_provider::list_tools_for_service_ids([$serviceid])['tools'], null, 'name');
+        $tool = $tools['core_course_get_contents'];
+
+        $this->assertSame('object', $tool['inputSchema']['type']);
+        $this->assertContains('integer', (array)$tool['inputSchema']['properties']['courseid']['type']);
+        $this->assertSame(['courseid'], $tool['inputSchema']['required']);
+        $this->assertSame('object', $tool['outputSchema']['type']);
+        $this->assertSame('array', $tool['outputSchema']['properties']['result']['type']);
+    }
+
+    /**
+     * Test tool names up to 128 characters of [A-Za-z0-9_-] are listed and longer or invalid names are dropped.
+     */
+    public function test_list_tools_accepts_names_up_to_128_characters(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+
+        $serviceid = $this->create_test_service(['core_webservice_get_site_info']);
+        $builder = new \webservice_mcp\local\catalog\catalog_builder();
+        $snapshot = $builder->get_snapshot();
+        $template = $snapshot['entries']['core_webservice_get_site_info'];
+        $names = [
+            'local_' . str_repeat('a', 59),
+            'local_' . str_repeat('b', 122),
+            'local_' . str_repeat('c', 123),
+            'local_bad.name',
+        ];
+        foreach ($names as $name) {
+            $snapshot['entries'][$name] = ['name' => $name, 'enabledserviceids' => [$serviceid]] + $template;
+        }
+        \cache::make('webservice_mcp', 'mcp_catalog_snapshot')->set('sitewide', $snapshot);
+
+        $listed = array_column(tool_provider::list_tools_for_service_ids([$serviceid])['tools'], 'name');
+
+        $this->assertSame(65, strlen($names[0]));
+        $this->assertSame(128, strlen($names[1]));
+        $this->assertContains($names[0], $listed);
+        $this->assertContains($names[1], $listed);
+        $this->assertNotContains($names[2], $listed);
+        $this->assertNotContains($names[3], $listed);
+    }
+
+    /**
+     * Test native tools are listed next to wrappers only when exposenativetools is enabled, with exact annotations.
+     */
+    public function test_list_tools_exposes_native_tools_when_enabled(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+
+        $serviceid = $this->create_test_service(['core_webservice_get_site_info', 'core_course_delete_courses']);
+        $options = ['allow_wrappers' => true, 'restrictedcontext' => context_system::instance()];
+
+        $names = array_column(tool_provider::list_tools_for_service_ids([$serviceid], $options)['tools'], 'name');
+        $this->assertNotContains('core_webservice_get_site_info', $names);
+
+        set_config('exposenativetools', 1, 'webservice_mcp');
+        $result = tool_provider::list_tools_for_service_ids([$serviceid], $options);
+        $tools = array_column($result['tools'], null, 'name');
+
+        $this->assertArrayHasKey('wrapper_moodle_api_search', $tools);
+        $this->assertStringStartsWith('wrapper_', $result['tools'][0]['name']);
+        $this->assertSame([
+            'readOnlyHint' => true,
+            'destructiveHint' => false,
+            'idempotentHint' => true,
+            'openWorldHint' => false,
+        ], $tools['core_webservice_get_site_info']['annotations']);
+        $this->assertSame([
+            'readOnlyHint' => false,
+            'destructiveHint' => true,
+            'idempotentHint' => false,
+            'openWorldHint' => false,
+        ], $tools['core_course_delete_courses']['annotations']);
+        $this->assertContains('operator', array_column($result['groups'], 'id'));
+        $this->assertContains('core', array_column($result['groups'], 'id'));
     }
 }

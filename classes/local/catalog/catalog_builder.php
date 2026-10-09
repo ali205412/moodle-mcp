@@ -19,6 +19,7 @@ declare(strict_types=1);
 namespace webservice_mcp\local\catalog;
 
 use core_external\external_api;
+use webservice_mcp\local\discovery\visibility_cache;
 
 /**
  * Harvest and cache a site-wide catalog of installed external functions.
@@ -35,6 +36,9 @@ class catalog_builder {
 
     /** Fixed cache key for the single-site snapshot. */
     private const CACHE_KEY = 'sitewide';
+
+    /** Bump when the normalized entry shape or schema mapping changes so cached snapshots are rebuilt. */
+    private const ENTRY_FORMAT_VERSION = 3;
 
     /** @var wrapper_registry */
     private wrapper_registry $wrapperregistry;
@@ -65,6 +69,8 @@ class catalog_builder {
 
         $snapshot = $this->build_snapshot($signature);
         $this->cache()->set(self::CACHE_KEY, $snapshot);
+        // Visibility sets are keyed by signature already; purging drops entries for the superseded catalog.
+        visibility_cache::purge();
 
         return $snapshot;
     }
@@ -76,6 +82,7 @@ class catalog_builder {
      */
     public function invalidate(): void {
         $this->cache()->delete(self::CACHE_KEY);
+        visibility_cache::purge();
     }
 
     /**
@@ -199,11 +206,7 @@ class catalog_builder {
             'domain' => $this->domain_for_component((string)$info->component),
             'mutability' => $mutability,
             'capabilities' => $this->capabilities((string)($info->capabilities ?? '')),
-            'annotations' => $this->annotations_for(
-                $mutability,
-                (bool)($info->readonlysession ?? false),
-                $this->destructive_for($info)
-            ),
+            'annotations' => $this->annotations_for($mutability, $this->destructive_for($info)),
             'provenance' => [
                 'source' => 'harvested',
                 'classname' => (string)$info->classname,
@@ -219,7 +222,7 @@ class catalog_builder {
             'enabledserviceids' => $enabledserviceids,
             'disabledserviceids' => $disabledserviceids,
             'inputSchema' => schema_builder::build($info->parameters_desc ?? null),
-            'outputSchema' => schema_builder::build($info->returns_desc ?? null),
+            'outputSchema' => schema_builder::build_output($info->returns_desc ?? null),
         ];
     }
 
@@ -340,6 +343,7 @@ class catalog_builder {
         global $CFG, $DB;
 
         $signaturedata = [
+            'entryformat' => self::ENTRY_FORMAT_VERSION,
             'siteversion' => (int)($CFG->version ?? 0),
             'externalfunctions' => $DB->count_records('external_functions'),
             'externalservices' => $DB->count_records('external_services'),
@@ -391,21 +395,20 @@ class catalog_builder {
     }
 
     /**
-     * Convert mutability/session hints into MCP annotations.
+     * Convert mutability into MCP annotations.
      *
-     * @param string $mutability Mutability hint.
-     * @param bool $readonlysession Whether the function advertises readonlysession.
+     * @param string $mutability Declared function type (read/write).
      * @param bool $destructive Whether the function name suggests destructive behavior.
      * @return array
      */
-    private function annotations_for(string $mutability, bool $readonlysession, bool $destructive): array {
-        $readonly = $mutability === 'read' || $readonlysession;
+    private function annotations_for(string $mutability, bool $destructive): array {
+        $readonly = $mutability === 'read';
 
         return [
             'readOnlyHint' => $readonly,
-            'destructiveHint' => $destructive,
+            'destructiveHint' => !$readonly && $destructive,
             'idempotentHint' => $readonly,
-            'openWorldHint' => true,
+            'openWorldHint' => false,
         ];
     }
 

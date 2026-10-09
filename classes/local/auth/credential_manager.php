@@ -49,6 +49,12 @@ class credential_manager {
     /** OAuth refresh token. */
     public const TOKEN_TYPE_REFRESH = 2;
 
+    /** Durable per-user key minted by an administrator (not OAuth, no refresh). */
+    public const TOKEN_TYPE_ADMIN = 3;
+
+    /** Minimum seconds between lastaccess writes for one credential. */
+    private const LASTACCESS_THROTTLE = 300;
+
     /** Connector credential table name. */
     private const TABLE = 'webservice_mcp_credential';
 
@@ -71,7 +77,12 @@ class credential_manager {
      * @return stdClass Stored credential record.
      * @throws dml_exception
      */
-    public function issue_bootstrap_credential(stdClass $service, int $userid, ?context $context = null, array $options = []): stdClass {
+    public function issue_bootstrap_credential(
+        stdClass $service,
+        int $userid,
+        ?context $context = null,
+        array $options = []
+    ): stdClass {
         $context ??= context_system::instance();
         $sid = $options['sid'] ?? session_id();
         $validuntil = (int)($options['validuntil'] ?? (time() + self::DEFAULT_BOOTSTRAP_TTL));
@@ -135,7 +146,12 @@ class credential_manager {
      * @return stdClass Stored credential record.
      * @throws dml_exception
      */
-    public function issue_oauth_access_token(stdClass $service, int $userid, ?context $context = null, array $options = []): stdClass {
+    public function issue_oauth_access_token(
+        stdClass $service,
+        int $userid,
+        ?context $context = null,
+        array $options = []
+    ): stdClass {
         $context ??= context_system::instance();
         $validuntil = (int)($options['validuntil'] ?? (time() + self::DEFAULT_OAUTH_ACCESS_TTL));
 
@@ -152,6 +168,8 @@ class credential_manager {
                 'scope' => $options['scope'] ?? '',
                 'resourceuri' => $options['resourceuri'] ?? null,
                 'oauthclientid' => $options['oauthclientid'] ?? null,
+                'familyid' => $options['familyid'] ?? null,
+                'familycreated' => $options['familycreated'] ?? null,
                 'usermodified' => $options['usermodified'] ?? $userid,
             ]
         );
@@ -167,7 +185,12 @@ class credential_manager {
      * @return stdClass Stored credential record.
      * @throws dml_exception
      */
-    public function issue_oauth_refresh_token(stdClass $service, int $userid, ?context $context = null, array $options = []): stdClass {
+    public function issue_oauth_refresh_token(
+        stdClass $service,
+        int $userid,
+        ?context $context = null,
+        array $options = []
+    ): stdClass {
         $context ??= context_system::instance();
         $validuntil = (int)($options['validuntil'] ?? (time() + self::DEFAULT_REFRESH_TTL));
 
@@ -184,9 +207,113 @@ class credential_manager {
                 'scope' => $options['scope'] ?? '',
                 'resourceuri' => $options['resourceuri'] ?? null,
                 'oauthclientid' => $options['oauthclientid'] ?? null,
+                'familyid' => $options['familyid'] ?? null,
+                'familycreated' => $options['familycreated'] ?? null,
                 'usermodified' => $options['usermodified'] ?? $userid,
             ]
         );
+    }
+
+    /**
+     * Issue a durable key for another user on an administrator's authority.
+     *
+     * Callers (admin_key_service) are responsible for authorising the issuer and target.
+     *
+     * @param int $targetuserid User the key acts for.
+     * @param stdClass $issuer Issuing user.
+     * @param array $options service (required), context, scope, validuntil, label, resourceuri.
+     * @return stdClass Stored record carrying the plaintext token in ->token (returned once only).
+     */
+    public function issue_admin_credential(int $targetuserid, stdClass $issuer, array $options): stdClass {
+        return $this->issue_credential(
+            self::TOKEN_TYPE_ADMIN,
+            $options['service'],
+            $targetuserid,
+            $options['context'] ?? context_system::instance(),
+            [
+                'sid' => null,
+                'validuntil' => (int)$options['validuntil'],
+                'iprestriction' => null,
+                'name' => (string)($options['label'] ?? $this->default_name('Admin key')),
+                'scope' => (string)($options['scope'] ?? 'mcp:read'),
+                'resourceuri' => $options['resourceuri'] ?? null,
+                'oauthclientid' => null,
+                'issuerid' => (int)$issuer->id,
+                'usermodified' => (int)$issuer->id,
+            ]
+        );
+    }
+
+    /**
+     * Return the stable family key of a credential: its OAuth family, or its own id for standalone credentials.
+     *
+     * @param stdClass $credential Credential record.
+     * @return string
+     */
+    public static function family_key(stdClass $credential): string {
+        return !empty($credential->familyid) ? 'f_' . $credential->familyid : 'c_' . (int)$credential->id;
+    }
+
+    /**
+     * Whether a family key (see family_key()) still has an active, unexpired credential.
+     *
+     * @param string $familykey Family key.
+     * @return bool
+     */
+    public function family_active(string $familykey): bool {
+        return $this->find_active_in_family($familykey) !== null;
+    }
+
+    /**
+     * Return one active, unexpired credential of a family, or null.
+     *
+     * @param string $familykey Family key (f_<familyid> or c_<credential id>).
+     * @return stdClass|null
+     */
+    public function find_active_in_family(string $familykey): ?stdClass {
+        global $DB;
+
+        $where = 'revoked = 0 AND (validuntil IS NULL OR validuntil = 0 OR validuntil >= :now)';
+        $params = ['now' => time()];
+        if (str_starts_with($familykey, 'f_') && strlen($familykey) > 2) {
+            $where .= ' AND familyid = :familyid';
+            $params['familyid'] = substr($familykey, 2);
+        } else if (str_starts_with($familykey, 'c_') && ctype_digit(substr($familykey, 2))) {
+            $where .= ' AND id = :id';
+            $params['id'] = (int)substr($familykey, 2);
+        } else {
+            return null;
+        }
+
+        $records = $DB->get_records_select(self::TABLE, $where, $params, 'id DESC', '*', 0, 1);
+        return $records ? reset($records) : null;
+    }
+
+    /**
+     * Re-check that a user may still act through a connector service (and, if given, a credential family).
+     *
+     * For anything that outlives the request that authenticated it: file tickets, cron tasks. See
+     * service_access::problem() for the checks.
+     *
+     * @param int $userid User id.
+     * @param int $serviceid External service id.
+     * @param string|null $familykey Credential family key (transport identity ->familyid), or null for none.
+     * @param bool $checkip Whether to enforce the allowed-user IP restriction (false in cron).
+     * @return void
+     * @throws \webservice_access_exception With the problem code when access is no longer allowed.
+     */
+    public function assert_service_access(int $userid, int $serviceid, ?string $familykey = null, bool $checkip = true): void {
+        service_access::assert($userid, $serviceid, $familykey, $checkip);
+    }
+
+    /**
+     * Hash an opaque token for storage and lookup; plaintext tokens are never persisted.
+     *
+     * @param string $token Opaque token.
+     * @return string
+     */
+    public static function hash_token(string $token): string {
+        return hash('sha256', $token);
     }
 
     /**
@@ -199,8 +326,8 @@ class credential_manager {
     public function resolve_credential(string $token): ?stdClass {
         global $DB;
 
-        $record = $DB->get_record(self::TABLE, ['token' => $token, 'revoked' => 0]);
-        if (!$record) {
+        $record = $this->find_credential($token);
+        if (!$record || !empty($record->revoked)) {
             return null;
         }
 
@@ -214,10 +341,32 @@ class credential_manager {
             return null;
         }
 
-        $record->lastaccess = time();
-        $DB->set_field(self::TABLE, 'lastaccess', $record->lastaccess, ['id' => $record->id]);
+        if (!empty($record->iprestriction) && !address_in_subnet(getremoteaddr(), $record->iprestriction)) {
+            return null;
+        }
+
+        if ((int)$record->lastaccess < time() - self::LASTACCESS_THROTTLE) {
+            $record->lastaccess = time();
+            $DB->set_field(self::TABLE, 'lastaccess', $record->lastaccess, ['id' => $record->id]);
+        }
 
         return $record;
+    }
+
+    /**
+     * Look up a credential by its plaintext token regardless of state, without side effects.
+     *
+     * @param string $token Opaque connector credential token.
+     * @return stdClass|null
+     */
+    public function find_credential(string $token): ?stdClass {
+        global $DB;
+
+        if ($token === '') {
+            return null;
+        }
+
+        return $DB->get_record(self::TABLE, ['token' => self::hash_token($token)]) ?: null;
     }
 
     /**
@@ -229,14 +378,82 @@ class credential_manager {
      * @throws dml_exception
      */
     public function revoke_credential(string $token, ?int $usermodified = null): bool {
-        global $DB;
-
-        $record = $DB->get_record(self::TABLE, ['token' => $token]);
+        $record = $this->find_credential($token);
         if (!$record) {
             return false;
         }
 
         return $this->revoke_record((int)$record->id, $usermodified ?? (int)$record->usermodified);
+    }
+
+    /**
+     * Retire a refresh token that was just replaced, recording when, for the reuse grace window.
+     *
+     * @param int $id Credential id.
+     * @param int $usermodified User performing the change.
+     * @return bool
+     */
+    public function mark_rotated(int $id, int $usermodified): bool {
+        return $this->revoke_record($id, $usermodified, true);
+    }
+
+    /**
+     * Revoke a single credential by id.
+     *
+     * @param int $id Credential id.
+     * @param int $usermodified User performing the revocation.
+     * @return bool
+     */
+    public function revoke_credential_by_id(int $id, int $usermodified): bool {
+        return $this->revoke_record($id, $usermodified);
+    }
+
+    /**
+     * Revoke every credential belonging to an OAuth token family.
+     *
+     * @param string $familyid Token family id.
+     * @param int $usermodified User performing the revocation.
+     * @return void
+     */
+    public function revoke_family(string $familyid, int $usermodified): void {
+        if ($familyid !== '') {
+            $this->revoke_where(['familyid' => $familyid], $usermodified);
+        }
+    }
+
+    /**
+     * Revoke every active credential of a user (password change, suspension, deletion).
+     *
+     * @param int $userid Moodle user id.
+     * @param int $usermodified User performing the revocation.
+     * @return void
+     */
+    public function revoke_all_for_user(int $userid, int $usermodified): void {
+        $this->revoke_where(['userid' => $userid], $usermodified);
+    }
+
+    /**
+     * Revoke every active credential matching simple field conditions.
+     *
+     * @param array $conditions Field => value conditions.
+     * @param int $usermodified User performing the revocation.
+     * @return int Number of credentials revoked.
+     */
+    public function revoke_where(array $conditions, int $usermodified): int {
+        global $DB;
+
+        $ids = $DB->get_fieldset_select(
+            self::TABLE,
+            'id',
+            implode(' AND ', array_map(static fn(string $field): string => $field . ' = :' . $field, array_keys($conditions)))
+                . ' AND revoked = 0',
+            $conditions
+        );
+        foreach ($ids as $id) {
+            $this->revoke_record((int)$id, $usermodified);
+        }
+
+        return count($ids);
     }
 
     /**
@@ -268,18 +485,19 @@ class credential_manager {
      * @param int $userid Moodle user id.
      * @param context $context Context restriction.
      * @param array $options Record overrides.
-     * @return stdClass Stored record.
+     * @return stdClass Stored record carrying the plaintext token in ->token.
      * @throws dml_exception
      */
     private function issue_credential(int $tokentype, stdClass $service, int $userid, context $context, array $options): stdClass {
         global $DB;
 
+        $token = $this->generate_unique_token();
         $record = (object)[
             'timecreated' => time(),
             'timemodified' => time(),
             'usermodified' => (int)$options['usermodified'],
             'userid' => $userid,
-            'token' => $this->generate_unique_token(),
+            'token' => self::hash_token($token),
             'name' => (string)$options['name'],
             'serviceidentifier' => $this->normalize_service_identifier($service),
             'contextid' => $context->id,
@@ -292,9 +510,15 @@ class credential_manager {
             'oauthclientid' => $options['oauthclientid'] ?? null,
             'lastaccess' => null,
             'revoked' => 0,
+            'familyid' => $options['familyid'] ?? null,
+            'familycreated' => $options['familycreated'] ?? null,
+            'issuerid' => $options['issuerid'] ?? null,
         ];
 
         $record->id = $DB->insert_record(self::TABLE, $record);
+        \webservice_mcp\event\credential_issued::create_from_credential($record)->trigger();
+        // The plaintext token is only ever handed back to the caller at issue time.
+        $record->token = $token;
         return $record;
     }
 
@@ -303,19 +527,31 @@ class credential_manager {
      *
      * @param int $id Record id.
      * @param int $usermodified User performing the change.
+     * @param bool $rotated Whether a refresh rotation replaced it (records rotatedat for the grace window).
      * @return bool
      * @throws dml_exception
      */
-    private function revoke_record(int $id, int $usermodified): bool {
+    private function revoke_record(int $id, int $usermodified, bool $rotated = false): bool {
         global $DB;
 
-        return $DB->update_record(self::TABLE, (object)[
-            'id' => $id,
-            'timemodified' => time(),
-            'usermodified' => $usermodified,
-            'revoked' => 1,
-        ]);
+        $record = $DB->get_record(self::TABLE, ['id' => $id]);
+        if (!$record) {
+            return false;
+        }
+        if (empty($record->revoked)) {
+            $record->revoked = 1;
+            $record->timemodified = time();
+            if ($rotated) {
+                $record->rotatedat = time();
+            }
+            $record->usermodified = $usermodified;
+            $DB->update_record(self::TABLE, $record);
+            \webservice_mcp\event\credential_revoked::create_from_credential($record, $usermodified)->trigger();
+        }
+
+        return true;
     }
+
 
     /**
      * Normalize service identity into a stable connector identifier.
@@ -369,7 +605,7 @@ class credential_manager {
             if ($attempts > 5) {
                 throw new moodle_exception('tokengenerationfailed');
             }
-        } while ($DB->record_exists(self::TABLE, ['token' => $token]));
+        } while ($DB->record_exists(self::TABLE, ['token' => self::hash_token($token)]));
 
         return $token;
     }

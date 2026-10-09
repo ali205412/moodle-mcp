@@ -26,9 +26,9 @@ use core_external\external_single_structure;
 use core_external\external_value;
 use webservice_mcp\local\catalog\catalog_builder;
 use webservice_mcp\local\catalog\schema_builder;
+use webservice_mcp\local\catalog\tool_metadata;
 use webservice_mcp\local\catalog\wrapper_registry;
-use webservice_mcp\local\discovery\eligibility_resolver;
-use webservice_mcp\local\discovery\risk_analyzer;
+use webservice_mcp\local\discovery\visibility_cache;
 use webservice_mcp\local\wrapper\manager as wrapper_manager;
 
 /**
@@ -51,6 +51,9 @@ class tool_provider {
 
     /** Maximum tools/list page size. */
     private const MAX_LIMIT = 2000;
+
+    /** Valid MCP tool names: up to 128 characters from [A-Za-z0-9_-] (SEP-986, Claude API). */
+    private const TOOL_NAME_PATTERN = '/^[A-Za-z0-9_-]{1,128}$/';
 
     /**
      * Retrieve a list of available tools for a given token.
@@ -114,47 +117,38 @@ class tool_provider {
         }
 
         $snapshot = (new catalog_builder())->get_snapshot();
-        $entries = self::entries_for_services($snapshot['entries'], $serviceids, (string)($options['group'] ?? ''));
+        $group = (string)($options['group'] ?? '');
         $restrictedcontext = $options['restrictedcontext'] ?? context_system::instance();
         $user = self::current_user($options['user'] ?? null);
-        $riskanalyzer = new risk_analyzer();
-        $eligibilityresolver = new eligibility_resolver();
+        $wrappermode = !empty($options['allow_wrappers']);
 
+        // Connector mode lists wrapper tools only, unless the admin opts in to native tools as well: 800+ tools
+        // exhaust clients without deferred tool loading. Native functions stay reachable through the
+        // wrapper_moodle_api_search/describe/execute gateway either way.
         $visibleentries = [];
-        foreach ($entries as $entry) {
-            // MCP protocol restricts tool names to a maximum of 64 characters.
-            if (strlen($entry['name'] ?? '') > 64) {
-                continue;
-            }
-
-            $risk = $riskanalyzer->analyze($entry);
-            $eligibility = $eligibilityresolver->evaluate(
-                $entry,
+        if (!$wrappermode || !empty(get_config('webservice_mcp', 'exposenativetools'))) {
+            $visible = (new visibility_cache())->visible_entries(
+                $snapshot,
+                $serviceids,
                 $restrictedcontext,
                 $user,
-                $entries,
-                [
-                    'risk' => $risk,
-                    'connector_mode' => $options['connector_mode'] ?? 'default',
-                    'site_policy' => $options['site_policy'] ?? [],
-                ]
+                (string)($options['connector_mode'] ?? 'default')
             );
-
-            if (!$eligibility['visible']) {
-                continue;
-            }
-
-            $entry['risk'] = $risk;
-            $entry['eligibility'] = $eligibility;
-            $visibleentries[] = $entry;
+            $visibleentries = array_values(array_filter($visible, static fn(array $entry): bool =>
+                ($group === '' || $entry['domain'] === $group)
+                && preg_match(self::TOOL_NAME_PATTERN, (string)$entry['name']) === 1));
+            usort($visibleentries, static fn(array $left, array $right): int =>
+                [$left['domain'], $left['name']] <=> [$right['domain'], $right['name']]);
         }
 
         $groups = self::groups_for_entries($visibleentries, $snapshot['coverage']);
-        $wrapperdefinitions = [];
-        $wrappertools = [];
-        if (!empty($options['allow_wrappers'])) {
-            $wrapperdefinitions = (new wrapper_manager())->describe_discoverable($restrictedcontext, $user);
-            $wrappertools = array_values(array_map([self::class, 'project_wrapper_tool'], $wrapperdefinitions));
+        $alltools = array_map([self::class, 'project_tool'], $visibleentries);
+
+        if ($wrappermode && ($group === '' || $group === 'operator')) {
+            $wrappertools = array_map(
+                [self::class, 'project_wrapper_tool'],
+                (new wrapper_manager())->describe_discoverable($restrictedcontext, $user)
+            );
             if ($wrappertools !== []) {
                 $groups[] = [
                     'id' => 'operator',
@@ -162,15 +156,9 @@ class tool_provider {
                     'count' => count($wrappertools),
                 ];
             }
-            // MCP mode: prevent context exhaustion by omitting raw native functions.
-            // The LLM must use wrapper_moodle_api_search and wrapper_moodle_api_execute instead.
-            $visibleentries = [];
+            // Wrappers first so the search/describe/execute gateway is never paginated away.
+            $alltools = array_merge($wrappertools, $alltools);
         }
-
-        $alltools = array_values(array_merge(
-            array_values(array_map([self::class, 'project_tool'], $visibleentries)),
-            $wrappertools,
-        ));
 
         $offset = self::cursor_offset($options['cursor'] ?? null);
         $limit = self::limit($options['limit'] ?? null);
@@ -181,48 +169,9 @@ class tool_provider {
             'tools' => $visibletools,
             'nextCursor' => $nextcursor,
             'groups' => $groups,
-            'coverage' => self::coverage_for_group(
-                $snapshot['coverage'],
-                $visibleentries,
-                (string)($options['group'] ?? '')
-            ),
+            'coverage' => self::coverage_for_group($snapshot['coverage'], $visibleentries, $group),
             'catalogVersion' => $snapshot['signature'] ?? null,
         ];
-    }
-
-    /**
-     * Filter snapshot entries down to the enabled tools for a service scope.
-     *
-     * @param array $entries Snapshot entries.
-     * @param array $serviceids Enabled service ids for this request.
-     * @param string $group Optional domain filter.
-     * @return array
-     */
-    private static function entries_for_services(array $entries, array $serviceids, string $group = ''): array {
-        $serviceidindex = array_fill_keys($serviceids, true);
-        $filtered = [];
-
-        foreach ($entries as $entry) {
-            if ($group !== '' && ($entry['domain'] ?? '') !== $group) {
-                continue;
-            }
-
-            $enabledserviceids = $entry['enabledserviceids'] ?? [];
-            foreach ($enabledserviceids as $serviceid) {
-                if (isset($serviceidindex[$serviceid])) {
-                    $filtered[] = $entry;
-                    break;
-                }
-            }
-        }
-
-        usort(
-            $filtered,
-            static fn(array $left, array $right): int =>
-                [$left['domain'], $left['name']] <=> [$right['domain'], $right['name']]
-        );
-
-        return $filtered;
     }
 
     /**
@@ -232,9 +181,9 @@ class tool_provider {
      * @return array
      */
     private static function project_tool(array $entry): array {
-        $surface = self::surface_metadata($entry);
+        $surface = tool_metadata::surface($entry);
         $workflow = (new wrapper_registry())->for_tool($entry['name']);
-        $execution = self::execution_metadata($entry);
+        $execution = tool_metadata::execution($entry);
 
         return [
             'name' => $entry['name'],
@@ -246,7 +195,7 @@ class tool_provider {
                     'result' => $entry['outputSchema'],
                 ],
             ],
-            'annotations' => $entry['annotations'],
+            'annotations' => self::native_annotations($entry),
             'x-moodle' => [
                 'component' => $entry['component'],
                 'domain' => $entry['domain'],
@@ -255,6 +204,7 @@ class tool_provider {
                 'provenance' => $entry['provenance'],
                 'transport' => $entry['transport'],
                 'eligibility' => $entry['eligibility'] ?? [],
+                'likelyPermitted' => (bool)($entry['eligibility']['likelyPermitted'] ?? true),
                 'risk' => $entry['risk'] ?? [],
                 'surface' => $surface,
                 'workflow' => $workflow,
@@ -272,6 +222,25 @@ class tool_provider {
     }
 
     /**
+     * MCP annotations for a native function: read-only and idempotent when declared type "read"; destructive
+     * when a write function's name or capabilities (RISK_DATALOSS) indicate it removes data.
+     *
+     * @param array $entry Visible catalog entry.
+     * @return array
+     */
+    private static function native_annotations(array $entry): array {
+        $readonly = ($entry['mutability'] ?? 'write') === 'read';
+
+        return [
+            'readOnlyHint' => $readonly,
+            'destructiveHint' => !$readonly && (!empty($entry['annotations']['destructiveHint'])
+                || in_array('data_loss', $entry['risk']['signals'] ?? [], true)),
+            'idempotentHint' => $readonly,
+            'openWorldHint' => false,
+        ];
+    }
+
+    /**
      * Project a discoverable wrapper definition into an MCP tool.
      *
      * @param array $definition Wrapper definition.
@@ -279,21 +248,12 @@ class tool_provider {
      */
     private static function project_wrapper_tool(array $definition): array {
         $workflow = (new wrapper_registry())->for_tool($definition['name']);
-        $surface = self::wrapper_surface_metadata($definition);
-        $destructive = in_array($definition['name'], [
-            'wrapper_course_delete_sections',
-            'wrapper_course_delete_modules',
-            'wrapper_question_delete_category',
-            'wrapper_question_delete_questions',
-            'wrapper_gradebook_delete_items',
-            'wrapper_gradebook_delete_categories',
-            'wrapper_badge_delete_badges',
-            'wrapper_badge_delete_related_badges',
-            'wrapper_badge_delete_alignments',
-            'wrapper_badge_revoke_badge',
-        ], true);
+        $surface = tool_metadata::wrapper_surface($definition);
+        $annotations = $definition['annotations'];
+        $readonly = !empty($annotations['readOnlyHint']);
+        $destructive = !empty($annotations['destructiveHint']);
 
-        return [
+        $tool = [
             'name' => $definition['name'],
             'description' => $definition['description'],
             'inputSchema' => $definition['inputSchema'],
@@ -303,16 +263,11 @@ class tool_provider {
                     'result' => $definition['outputSchema'],
                 ],
             ],
-            'annotations' => [
-                'readOnlyHint' => false,
-                'destructiveHint' => $destructive,
-                'idempotentHint' => false,
-                'openWorldHint' => false,
-            ],
+            'annotations' => $annotations,
             'x-moodle' => [
                 'component' => $definition['component'],
                 'domain' => $definition['domain'],
-                'mutability' => 'write',
+                'mutability' => $readonly ? 'read' : 'write',
                 'capabilities' => $definition['requiredCapabilities'],
                 'provenance' => [
                     'source' => 'wrapper',
@@ -323,7 +278,7 @@ class tool_provider {
                 'transport' => [
                     'allowedfromajax' => false,
                     'loginrequired' => true,
-                    'readonlysession' => false,
+                    'readonlysession' => $readonly,
                 ],
                 'eligibility' => [
                     'status' => 'visible',
@@ -334,8 +289,8 @@ class tool_provider {
                     'accessInformationTools' => [],
                 ],
                 'risk' => [
-                    'level' => 'high',
-                    'confirmationRequired' => true,
+                    'level' => $readonly ? 'low' : 'high',
+                    'confirmationRequired' => !$readonly,
                     'signals' => array_values(array_filter([
                         'wrapper',
                         $surface['area'],
@@ -361,278 +316,11 @@ class tool_provider {
                 'services' => [],
             ],
         ];
-    }
-
-    /**
-     * Project wrapper-specific surface metadata.
-     *
-     * @param array $definition Wrapper definition.
-     * @return array
-     */
-    private static function wrapper_surface_metadata(array $definition): array {
-        $name = (string)($definition['name'] ?? '');
-
-        return match (true) {
-            str_starts_with($name, 'wrapper_question_') => ['surface' => 'operator', 'area' => 'question_bank'],
-            str_starts_with($name, 'wrapper_gradebook_') => ['surface' => 'operator', 'area' => 'gradebook'],
-            str_starts_with($name, 'wrapper_badge_') => ['surface' => 'operator', 'area' => 'badges'],
-            default => ['surface' => 'operator', 'area' => 'authoring'],
-        };
-    }
-
-    /**
-     * Derive curated surface metadata for core learning/personal/file tools.
-     *
-     * @param array $entry Catalog entry.
-     * @return array
-     */
-    private static function surface_metadata(array $entry): array {
-        $name = (string)$entry['name'];
-        $component = (string)($entry['component'] ?? '');
-
-        if (in_array(
-            $name,
-            [
-                'core_course_get_categories',
-                'core_course_create_categories',
-                'core_course_update_categories',
-                'core_course_delete_categories',
-            ],
-            true
-        )) {
-            return ['surface' => 'operator', 'area' => 'categories'];
+        if (($definition['title'] ?? '') !== '') {
+            $tool['title'] = $definition['title'];
         }
 
-        if (in_array(
-            $name,
-            [
-                'core_course_create_courses',
-                'core_course_update_courses',
-                'core_course_delete_courses',
-                'core_course_duplicate_course',
-                'core_course_import_course',
-            ],
-            true
-        )) {
-            return ['surface' => 'operator', 'area' => 'courses'];
-        }
-
-        if (
-            str_starts_with($name, 'core_courseformat_') ||
-            in_array(
-                $name,
-                [
-                    'core_course_edit_module',
-                    'core_course_edit_section',
-                    'core_course_delete_modules',
-                    'core_course_toggle_activity_recommendation',
-                    'core_course_get_activity_chooser_footer',
-                    'core_course_get_module',
-                ],
-                true
-            )
-        ) {
-            return ['surface' => 'operator', 'area' => 'authoring'];
-        }
-
-        if (str_starts_with($name, 'core_course_')) {
-            return ['surface' => 'learning', 'area' => 'courses'];
-        }
-
-        if (str_starts_with($name, 'core_completion_')) {
-            return ['surface' => 'learning', 'area' => 'completion'];
-        }
-
-        if (str_starts_with($name, 'core_calendar_')) {
-            return ['surface' => 'personal', 'area' => 'calendar'];
-        }
-
-        if (str_starts_with($name, 'core_badges_')) {
-            return ['surface' => 'operator', 'area' => 'badges'];
-        }
-
-        if (str_starts_with($name, 'core_message_')) {
-            return ['surface' => 'personal', 'area' => 'messaging'];
-        }
-
-        if (str_starts_with($name, 'core_notes_')) {
-            return ['surface' => 'personal', 'area' => 'notes'];
-        }
-
-        if (in_array(
-            $name,
-            [
-                'core_user_get_private_files_info',
-                'core_user_prepare_private_files_for_edition',
-                'core_user_add_user_private_files',
-                'core_user_update_private_files',
-            ],
-            true
-        )) {
-            return ['surface' => 'files', 'area' => 'private_files'];
-        }
-
-        if (in_array(
-            $name,
-            [
-                'core_user_search_identity',
-                'core_user_get_users',
-                'core_user_get_users_by_field',
-                'core_user_create_users',
-                'core_user_update_users',
-                'core_user_delete_users',
-                'core_user_view_user_list',
-            ],
-            true
-        )) {
-            return ['surface' => 'operator', 'area' => 'users'];
-        }
-
-        if (str_starts_with($name, 'core_user_')) {
-            return ['surface' => 'personal', 'area' => 'profile'];
-        }
-
-        if (str_starts_with($name, 'core_files_')) {
-            return ['surface' => 'files', 'area' => 'draft_files'];
-        }
-
-        if (
-            str_starts_with($name, 'core_enrol_') ||
-            str_starts_with($name, 'enrol_manual_') ||
-            str_starts_with($name, 'enrol_self_')
-        ) {
-            return ['surface' => 'operator', 'area' => 'enrolments'];
-        }
-
-        if (str_starts_with($name, 'core_group_')) {
-            return ['surface' => 'operator', 'area' => 'groups'];
-        }
-
-        if (str_starts_with($name, 'core_cohort_')) {
-            return ['surface' => 'operator', 'area' => 'cohorts'];
-        }
-
-        if (str_starts_with($name, 'core_role_')) {
-            return ['surface' => 'operator', 'area' => 'roles'];
-        }
-
-        if (
-            str_starts_with($name, 'core_question_') ||
-            str_starts_with($name, 'qbank_')
-        ) {
-            return ['surface' => 'operator', 'area' => 'question_bank'];
-        }
-
-        if (
-            str_starts_with($name, 'grade_') ||
-            str_starts_with($name, 'gradereport_') ||
-            str_starts_with($name, 'gradingform_')
-        ) {
-            return ['surface' => 'operator', 'area' => 'gradebook'];
-        }
-
-        if (str_starts_with($name, 'core_competency_')) {
-            return ['surface' => 'operator', 'area' => 'competencies'];
-        }
-
-        if (str_starts_with($name, 'tool_dataprivacy_')) {
-            return ['surface' => 'operator', 'area' => 'privacy'];
-        }
-
-        if (str_starts_with($component, 'mod_')) {
-            return ['surface' => 'activity', 'area' => self::activity_area_for_component($component)];
-        }
-
-        return ['surface' => 'general', 'area' => $entry['domain']];
-    }
-
-    /**
-     * Map a module component to a curated activity area label.
-     *
-     * @param string $component Module component.
-     * @return string
-     */
-    private static function activity_area_for_component(string $component): string {
-        return match ($component) {
-            'mod_assign' => 'assignments',
-            'mod_forum' => 'forums',
-            'mod_quiz' => 'quizzes',
-            'mod_workshop' => 'workshops',
-            'mod_feedback' => 'feedback',
-            'mod_chat' => 'chat',
-            'mod_glossary' => 'glossary',
-            'mod_wiki' => 'wiki',
-            'mod_data' => 'database',
-            'mod_choice' => 'choice',
-            'mod_survey' => 'survey',
-            'mod_scorm' => 'scorm',
-            'mod_h5pactivity' => 'h5pactivity',
-            'mod_bigbluebuttonbn' => 'bigbluebutton',
-            'mod_lti' => 'lti',
-            default => substr($component, 4),
-        };
-    }
-
-    /**
-     * Derive execution hints for tools that trigger async or long-running work.
-     *
-     * @param array $entry Catalog entry.
-     * @return array
-     */
-    private static function execution_metadata(array $entry): array {
-        $name = (string)$entry['name'];
-
-        if (in_array(
-            $name,
-            [
-                'tool_dataprivacy_create_data_request',
-                'tool_dataprivacy_approve_data_request',
-                'tool_dataprivacy_bulk_approve_data_requests',
-                'tool_dataprivacy_deny_data_request',
-                'tool_dataprivacy_bulk_deny_data_requests',
-                'tool_dataprivacy_cancel_data_request',
-                'tool_dataprivacy_mark_complete',
-                'tool_dataprivacy_submit_selected_courses_form',
-                'tool_dataprivacy_confirm_contexts_for_deletion',
-            ],
-            true
-        )) {
-            return [
-                'mode' => 'async_request',
-                'followupTools' => [
-                    'tool_dataprivacy_get_data_request',
-                    'tool_dataprivacy_get_data_requests',
-                ],
-                'notes' => [
-                    'This call updates a privacy-request workflow that may complete after the initial response.',
-                ],
-            ];
-        }
-
-        if (in_array(
-            $name,
-            [
-                'core_course_duplicate_course',
-                'core_course_import_course',
-                'core_course_delete_courses',
-                'core_course_delete_categories',
-            ],
-            true
-        )) {
-            return [
-                'mode' => 'long_running',
-                'followupTools' => [],
-                'notes' => [
-                    'This call may take noticeably longer than standard tool invocations on large sites.',
-                ],
-            ];
-        }
-
-        return [
-            'mode' => 'sync',
-            'followupTools' => [],
-            'notes' => [],
-        ];
+        return $tool;
     }
 
     /**
@@ -777,6 +465,7 @@ class tool_provider {
         if ($param instanceof external_value) {
             switch ($param->type) {
                 case PARAM_INT:
+                    return 'integer';
                 case PARAM_FLOAT:
                     return 'number';
                 case PARAM_BOOL:

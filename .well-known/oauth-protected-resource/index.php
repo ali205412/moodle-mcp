@@ -14,10 +14,20 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+/**
+ * OAuth 2.0 protected resource metadata (RFC 9728) for the MCP endpoint.
+ *
+ * @package     webservice_mcp
+ * @copyright   2026 Ali Abdelaal
+ * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
 declare(strict_types=1);
 
 define('NO_DEBUG_DISPLAY', true);
 
+// Public or client-authenticated endpoint: no browser session.
+define('NO_MOODLE_COOKIES', true);
 require('../../../../config.php');
 
 $oauth = new \webservice_mcp\local\oauth\service();
@@ -38,4 +48,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 
-echo json_encode($oauth->build_protected_resource_metadata(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+$documents = new \webservice_mcp\local\oauth\metadata($oauth);
+echo json_encode($documents->build_protected_resource_metadata(), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);

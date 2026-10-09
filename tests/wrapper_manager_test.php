@@ -23,8 +23,6 @@ use core_external\external_api;
 use webservice_mcp\local\wrapper\definition;
 use webservice_mcp\local\wrapper\manager;
 
-defined('MOODLE_INTERNAL') || die();
-
 /**
  * Tests for wrapper foundation helpers.
  *
@@ -35,6 +33,8 @@ defined('MOODLE_INTERNAL') || die();
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  * @covers      \webservice_mcp\local\wrapper\definition
  * @covers      \webservice_mcp\local\wrapper\manager
+ * @covers      \webservice_mcp\local\wrapper\builtin_definitions
+ * @covers      \webservice_mcp\local\wrapper\arguments
  */
 final class wrapper_manager_test extends advanced_testcase {
     /**
@@ -228,5 +228,100 @@ final class wrapper_manager_test extends advanced_testcase {
 
         $this->assertSame('Wrapper Badge', $result['name']);
         $this->assertGreaterThan(0, $result['badgeid']);
+    }
+
+    /**
+     * Test only explicitly read-only wrappers are non-mutating, and api_execute follows the target function type.
+     */
+    public function test_is_mutating_uses_explicit_read_only_set(): void {
+        $manager = new manager();
+        $readonly = [
+            'wrapper_moodle_api_search',
+            'wrapper_moodle_api_describe',
+            'wrapper_question_preview_question',
+            'wrapper_module_read_data',
+            'wrapper_memory_read',
+        ];
+
+        foreach ($manager->all() as $definition) {
+            $name = $definition->get_name();
+            if ($name === 'wrapper_moodle_api_execute') {
+                continue;
+            }
+            $this->assertSame(!in_array($name, $readonly, true), $manager->is_mutating($name), $name);
+        }
+
+        $this->assertFalse(
+            $manager->is_mutating('wrapper_moodle_api_execute', ['functionname' => 'core_webservice_get_site_info'])
+        );
+        $this->assertTrue($manager->is_mutating('wrapper_moodle_api_execute', ['functionname' => 'core_course_delete_courses']));
+        $this->assertTrue($manager->is_mutating('wrapper_moodle_api_execute', []));
+        $this->assertTrue($manager->is_mutating('wrapper_unknown'));
+    }
+
+    /**
+     * Test definitions carry explicit annotations, titles, integer ids and bounded descriptions.
+     */
+    public function test_definitions_have_explicit_metadata(): void {
+        $manager = new manager();
+
+        foreach ($manager->all() as $definition) {
+            $described = $definition->describe();
+            $name = $described['name'];
+            $annotations = $described['annotations'];
+
+            $this->assertNotSame('', $described['title'], $name);
+            $this->assertLessThanOrEqual(2000, strlen($described['description']), $name);
+            $this->assertSame('object', $described['inputSchema']['type'], $name);
+            $this->assertSame('object', $described['outputSchema']['type'], $name);
+            $this->assertFalse($annotations['openWorldHint'], $name);
+            $this->assertSame(
+                !$annotations['readOnlyHint'],
+                $manager->is_mutating($name, ['functionname' => 'core_course_delete_courses']),
+                $name
+            );
+            foreach ($described['inputSchema']['properties'] as $property => $schema) {
+                if (preg_match('/^(courseid|cmid|badgeid|itemid|categoryid|questionid|contextid|recipientid)$/', $property)) {
+                    $this->assertSame('integer', $schema['type'], "{$name}.{$property}");
+                }
+            }
+        }
+
+        $execute = $manager->find('wrapper_moodle_api_execute')->describe()['annotations'];
+        $this->assertTrue($execute['destructiveHint']);
+        $this->assertFalse($execute['readOnlyHint']);
+        $this->assertTrue($manager->find('wrapper_course_delete_modules')->describe()['annotations']['destructiveHint']);
+        $this->assertTrue($manager->find('wrapper_moodle_api_search')->describe()['annotations']['readOnlyHint']);
+    }
+
+    /**
+     * Test wrappers enforce the restricted context passed to execute().
+     */
+    public function test_wrapper_execute_enforces_restricted_context(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+
+        $allowed = $this->getDataGenerator()->create_course();
+        $other = $this->getDataGenerator()->create_course();
+
+        $this->expectException(\core_external\restricted_context_exception::class);
+        (new manager())->execute(
+            'wrapper_course_create_missing_sections',
+            ['courseid' => $other->id, 'sectionnums' => [1]],
+            context_course::instance($allowed->id),
+            get_admin()
+        );
+    }
+
+    /**
+     * Test string booleans such as "false" are not treated as true.
+     */
+    public function test_wrapper_arguments_parse_string_booleans(): void {
+        $this->assertFalse(\webservice_mcp\local\wrapper\arguments::to_bool('false'));
+        $this->assertFalse(\webservice_mcp\local\wrapper\arguments::to_bool('0'));
+        $this->assertFalse(\webservice_mcp\local\wrapper\arguments::to_bool(0));
+        $this->assertTrue(\webservice_mcp\local\wrapper\arguments::to_bool('true'));
+        $this->assertTrue(\webservice_mcp\local\wrapper\arguments::to_bool(1));
+        $this->assertTrue(\webservice_mcp\local\wrapper\arguments::flag([], 'archive', true));
     }
 }

@@ -20,6 +20,7 @@ namespace webservice_mcp\local\auth;
 
 use context;
 use context_system;
+use core\session\manager;
 use core_user;
 use moodle_exception;
 use required_capability_exception;
@@ -88,9 +89,31 @@ class bootstrap_service {
 
         $context ??= context_system::instance();
 
-        core_user::require_active_user($USER);
+        // A login-as session must never mint credentials that outlive it in the impersonated user's name.
+        if (manager::is_loggedinas()) {
+            throw new moodle_exception('loginasnotallowed', 'webservice_mcp');
+        }
 
-        if (!has_capability('webservice/mcp:use', $context)) {
+        self::require_user_eligible($USER, $context);
+    }
+
+    /**
+     * Ensure a user is active, holds webservice/mcp:use in the context, and is allowed by the site-admin policy.
+     *
+     * @param stdClass $user User record.
+     * @param context $context Restricted context.
+     * @return void
+     * @throws moodle_exception
+     */
+    public static function require_user_eligible(stdClass $user, context $context): void {
+        core_user::require_active_user($user, true, true);
+
+        $allowsiteadmins = get_config('webservice_mcp', 'allowsiteadmins');
+        if ($allowsiteadmins !== false && empty($allowsiteadmins) && is_siteadmin($user)) {
+            throw new moodle_exception('siteadminsnotallowed', 'webservice_mcp');
+        }
+
+        if (!has_capability('webservice/mcp:use', $context, $user)) {
             throw new required_capability_exception(
                 $context,
                 'webservice/mcp:use',

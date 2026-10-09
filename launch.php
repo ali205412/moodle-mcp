@@ -53,8 +53,27 @@ core_user::require_active_user($USER);
 $PAGE->set_context(context_system::instance());
 $PAGE->set_url($pageurl);
 $PAGE->set_pagelayout('base');
+$PAGE->set_cacheable(false);
+header('Cache-Control: no-store');
 
 $service = new \webservice_mcp\local\auth\bootstrap_service();
+
+// Refuse early (including login-as sessions) before offering to mint anything.
+try {
+    $service->require_bootstrap_access();
+} catch (\required_capability_exception $exception) {
+    throw new moodle_exception('launch:denied', 'webservice_mcp', '', null, $exception->getMessage());
+}
+
+// Minting a credential is a state change: require an explicit POST with sesskey.
+if (!data_submitted() || !confirm_sesskey()) {
+    echo $OUTPUT->header();
+    echo $OUTPUT->heading(get_string('launch:heading', 'webservice_mcp'));
+    // A moodle_url continue target renders as a POST single_button carrying the sesskey.
+    echo $OUTPUT->confirm(get_string('launch:confirm', 'webservice_mcp'), $pageurl, new moodle_url('/'));
+    echo $OUTPUT->footer();
+    exit;
+}
 
 try {
     $credential = $service->issue_bootstrap_for_current_user();

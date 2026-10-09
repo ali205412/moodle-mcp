@@ -35,10 +35,17 @@ $capabilities = [
         ],
     ],
     'webservice/mcp:manageconnectors' => [
+        'riskbitmask' => RISK_CONFIG | RISK_PERSONAL,
         'captype' => 'write',
         'contextlevel' => CONTEXT_SYSTEM,
         'archetypes' => [
             'manager' => CAP_ALLOW,
         ],
+    ],
+    'webservice/mcp:issueforothers' => [
+        'riskbitmask' => RISK_CONFIG | RISK_PERSONAL | RISK_DATALOSS,
+        'captype' => 'write',
+        'contextlevel' => CONTEXT_SYSTEM,
+        'archetypes' => [],
     ],
 ];

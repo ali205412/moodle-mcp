@@ -23,7 +23,6 @@ use context_course;
 use context_system;
 use core_badges\badge;
 use core_external\external_api;
-use html_writer;
 use stdClass;
 
 /**
@@ -36,6 +35,16 @@ use stdClass;
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class badge_service {
+    /** @var badge_record_builder */
+    private badge_record_builder $records;
+
+    /**
+     * Constructor.
+     */
+    public function __construct() {
+        $this->records = new badge_record_builder();
+    }
+
     /**
      * Create a site or course badge.
      *
@@ -55,8 +64,8 @@ class badge_service {
             $PAGE->set_context($context);
         }
 
-        $data = $this->badge_payload($payload, null);
-        $badge = $this->create_badge_record($data, $courseid);
+        $data = $this->records->badge_payload($payload, null);
+        $badge = $this->records->create_badge_record($data, $courseid);
 
         return $this->badge_result($badge);
     }
@@ -71,13 +80,18 @@ class badge_service {
     public function update_badge(int $badgeid, array $payload): array {
         require_once($this->libdir() . '/badgeslib.php');
 
-        $badge = new badge($badgeid);
+        $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
         external_api::validate_context($context);
         \require_capability('moodle/badges:configuredetails', $context);
 
-        $data = $this->badge_payload($payload, $badge);
-        $this->apply_badge_update($badge, $data);
+        // The badge details form is frozen for active or locked badges.
+        if ($badge->is_active() || $badge->is_locked()) {
+            throw new \moodle_exception('wrapper:badgelocked', 'webservice_mcp');
+        }
+
+        $data = $this->records->badge_payload($payload, $badge);
+        $this->records->apply_badge_update($badge, $data);
 
         return $this->badge_result($badge);
     }
@@ -92,13 +106,13 @@ class badge_service {
     public function update_badge_message(int $badgeid, array $payload): array {
         require_once($this->libdir() . '/badgeslib.php');
 
-        $badge = new badge($badgeid);
+        $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
         external_api::validate_context($context);
         \require_capability('moodle/badges:configuremessages', $context);
 
-        $data = $this->badge_message_payload($payload, $badge);
-        $this->apply_badge_message_update($badge, $data);
+        $data = $this->records->badge_message_payload($payload, $badge);
+        $this->records->apply_badge_message_update($badge, $data);
 
         return $this->badge_result($badge);
     }
@@ -115,7 +129,7 @@ class badge_service {
 
         $badgeids = $this->normalize_ids($badgeids);
         foreach ($badgeids as $badgeid) {
-            $badge = new badge($badgeid);
+            $badge = $this->load_badge($badgeid);
             $context = $badge->get_context();
             external_api::validate_context($context);
             \require_capability('moodle/badges:deletebadge', $context);
@@ -138,7 +152,7 @@ class badge_service {
         global $PAGE;
         require_once($this->libdir() . '/badgeslib.php');
 
-        $badge = new badge($badgeid);
+        $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
         external_api::validate_context($context);
         \require_capability('moodle/badges:createbadge', $context);
@@ -168,6 +182,7 @@ class badge_service {
             throw new \moodle_exception('invalidparameter');
         }
 
+        $this->require_relatable_badges($badge, $relatedbadgeids);
         $badge->add_related_badges($relatedbadgeids);
 
         return [
@@ -209,17 +224,18 @@ class badge_service {
      * @return array
      */
     public function save_alignment(int $badgeid, array $payload, ?int $alignmentid = null): array {
+        global $DB;
         require_once($this->libdir() . '/badgeslib.php');
 
         $badge = $this->editable_relation_badge($badgeid);
-        $alignment = (object)[
-            'badgeid' => $badgeid,
-            'targetname' => (string)($payload['targetname'] ?? ''),
-            'targeturl' => (string)($payload['targeturl'] ?? ''),
-            'targetdescription' => (string)($payload['targetdescription'] ?? ''),
-            'targetframework' => (string)($payload['targetframework'] ?? ''),
-            'targetcode' => (string)($payload['targetcode'] ?? ''),
-        ];
+        if (
+            $alignmentid !== null && $alignmentid > 0 &&
+                !$DB->record_exists('badge_alignment', ['id' => $alignmentid, 'badgeid' => $badgeid])
+        ) {
+            throw arguments::invalid('alignmentid does not belong to this badge.');
+        }
+        $alignment = $this->records->alignment_payload($payload);
+        $alignment->badgeid = $badgeid;
         $newalignmentid = (int)$badge->save_alignment($alignment, (int)($alignmentid ?? 0));
 
         return [
@@ -265,7 +281,7 @@ class badge_service {
         require_once($this->libdir() . '/badgeslib.php');
         require_once($this->dirroot() . '/badges/lib/awardlib.php');
 
-        $badge = new badge($badgeid);
+        $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
         external_api::validate_context($context);
         \require_capability('moodle/badges:awardbadge', $context);
@@ -273,6 +289,7 @@ class badge_service {
         if (!$badge->is_active()) {
             throw new \moodle_exception('donotaward', 'badges');
         }
+        $this->require_valid_recipient($badge, $recipientid);
 
         $resolvedroleid = $this->resolve_manual_issuer_role($badge, $issuerroleid);
         $awarded = \process_manual_award($recipientid, (int)$USER->id, $resolvedroleid, $badgeid);
@@ -305,7 +322,7 @@ class badge_service {
         require_once($this->libdir() . '/badgeslib.php');
         require_once($this->dirroot() . '/badges/lib/awardlib.php');
 
-        $badge = new badge($badgeid);
+        $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
         external_api::validate_context($context);
         \require_capability('moodle/badges:revokebadge', $context);
@@ -322,13 +339,37 @@ class badge_service {
     }
 
     /**
+     * Ensure the recipient is a real user who may earn the badge, as the award page's user selector does.
+     *
+     * @param badge $badge Badge object.
+     * @param int $recipientid User id.
+     * @return void
+     */
+    private function require_valid_recipient(badge $badge, int $recipientid): void {
+        global $DB;
+
+        $recipient = $DB->get_record('user', ['id' => $recipientid, 'deleted' => 0]);
+        if (!$recipient || \isguestuser($recipient) || !empty($recipient->suspended)) {
+            throw new \moodle_exception('wrapper:badgerecipientinvalid', 'webservice_mcp', '', $recipientid);
+        }
+
+        $context = $badge->get_context();
+        $canearn = (int)$context->contextlevel === CONTEXT_COURSE
+            ? \is_enrolled($context, $recipient, 'moodle/badges:earnbadge', true)
+            : \has_capability('moodle/badges:earnbadge', $context, $recipient);
+        if (!$canearn) {
+            throw new \moodle_exception('wrapper:badgerecipientinvalid', 'webservice_mcp', '', $recipientid);
+        }
+    }
+
+    /**
      * Ensure a badge is editable through relation/alignment flows.
      *
      * @param int $badgeid Badge id.
      * @return badge
      */
     private function editable_relation_badge(int $badgeid): badge {
-        $badge = new badge($badgeid);
+        $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
         external_api::validate_context($context);
         \require_capability('moodle/badges:configuredetails', $context);
@@ -347,225 +388,66 @@ class badge_service {
      * @return context
      */
     private function creation_context(?int $courseid): context {
+        $this->require_badges_enabled($courseid !== null);
+
+        return $courseid === null ? context_system::instance() : context_course::instance($courseid, MUST_EXIST);
+    }
+
+    /**
+     * Ensure related badges exist, are not the badge itself, and for a course badge belong to the same course or
+     * are site badges (badges/related_form.php get_badges_option()).
+     *
+     * @param badge $badge Badge being edited.
+     * @param int[] $relatedbadgeids Candidate related badge ids.
+     * @return void
+     */
+    private function require_relatable_badges(badge $badge, array $relatedbadgeids): void {
+        global $DB;
+
+        [$insql, $params] = $DB->get_in_or_equal($relatedbadgeids, SQL_PARAMS_NAMED);
+        $sql = "id {$insql} AND id <> :badgeid";
+        $params['badgeid'] = $badge->id;
+        if ((int)$badge->type === BADGE_TYPE_COURSE) {
+            $sql .= ' AND (courseid = :courseid OR type = :sitetype)';
+            $params['courseid'] = $badge->courseid;
+            $params['sitetype'] = BADGE_TYPE_SITE;
+        }
+        if ($DB->count_records_select('badge', $sql, $params) !== count($relatedbadgeids)) {
+            throw arguments::invalid('Related badges must exist, differ from the badge, and for a course '
+                . 'badge be site badges or badges of the same course.');
+        }
+    }
+
+    /**
+     * Load a badge after checking the site badge switches allow working with it.
+     *
+     * @param int $badgeid Badge id.
+     * @return badge
+     */
+    private function load_badge(int $badgeid): badge {
+        require_once($this->libdir() . '/badgeslib.php');
+
+        $badge = new badge($badgeid);
+        $this->require_badges_enabled((int)$badge->type === BADGE_TYPE_COURSE);
+
+        return $badge;
+    }
+
+    /**
+     * Refuse badge operations when badges (or course badges) are disabled, as the core badge pages do.
+     *
+     * @param bool $coursebadge Whether the badge is a course badge.
+     * @return void
+     */
+    private function require_badges_enabled(bool $coursebadge): void {
         global $CFG;
 
         if (empty($CFG->enablebadges)) {
             throw new \moodle_exception('badgesdisabled', 'badges');
         }
-
-        if ($courseid === null) {
-            return context_system::instance();
-        }
-
-        if (empty($CFG->badges_allowcoursebadges)) {
+        if ($coursebadge && empty($CFG->badges_allowcoursebadges)) {
             throw new \moodle_exception('coursebadgesdisabled', 'badges');
         }
-
-        return context_course::instance($courseid, MUST_EXIST);
-    }
-
-    /**
-     * Build a full badge payload from partial input and current badge data.
-     *
-     * @param array $payload Raw payload.
-     * @param badge|null $existing Existing badge.
-     * @return stdClass
-     */
-    private function badge_payload(array $payload, ?badge $existing): stdClass {
-        global $CFG, $SITE;
-
-        $data = new stdClass();
-        $data->name = (string)($payload['name'] ?? $existing?->name ?? '');
-        $data->version = (string)($payload['version'] ?? $existing?->version ?? 'v1');
-        $data->language = (string)($payload['language'] ?? $existing?->language ?? current_language());
-        $data->description = (string)($payload['description'] ?? $existing?->description ?? '');
-        $data->imageauthorname = (string)($payload['imageauthorname'] ?? $existing?->imageauthorname ?? '');
-        $data->imageauthoremail = (string)($payload['imageauthoremail'] ?? $existing?->imageauthoremail ?? '');
-        $data->imageauthorurl = (string)($payload['imageauthorurl'] ?? $existing?->imageauthorurl ?? '');
-        $data->imagecaption = (string)($payload['imagecaption'] ?? $existing?->imagecaption ?? '');
-        $data->issuername = (string)($payload['issuername'] ?? $existing?->issuername ?? format_string($SITE->fullname));
-        $data->issuerurl = (string)($payload['issuerurl'] ?? $existing?->issuerurl ?? $CFG->wwwroot);
-        $data->issuercontact = (string)($payload['issuercontact'] ?? $existing?->issuercontact ?? '');
-
-        [$expiry, $expiredate, $expireperiod] = $this->badge_expiry_values($payload, $existing);
-        $data->expiry = $expiry;
-        $data->expiredate = $expiredate;
-        $data->expireperiod = $expireperiod;
-        $data->tags = $payload['tags'] ?? ($existing ? $existing->get_badge_tags() : []);
-
-        return $data;
-    }
-
-    /**
-     * Build a badge-message payload from partial input and current badge data.
-     *
-     * @param array $payload Raw payload.
-     * @param badge $existing Existing badge.
-     * @return stdClass
-     */
-    private function badge_message_payload(array $payload, badge $existing): stdClass {
-        $data = new stdClass();
-        $data->messagesubject = (string)($payload['messagesubject'] ?? $existing->messagesubject ?? '');
-        $data->message_editor = [
-            'text' => (string)($payload['message'] ?? $existing->message ?? ''),
-            'format' => (int)($payload['messageformat'] ?? FORMAT_HTML),
-        ];
-        $data->notification = (int)($payload['notification'] ?? $existing->notification ?? BADGE_MESSAGE_NEVER);
-        $data->attachment = !empty($payload['attachment']) ? 1 : (int)($existing->attachment ?? 1);
-
-        return $data;
-    }
-
-    /**
-     * Apply a badge update with runtime fallbacks for older supported branches.
-     *
-     * @param badge $badge Badge object.
-     * @param stdClass $data Badge payload.
-     * @return void
-     */
-    private function apply_badge_update(badge $badge, stdClass $data): void {
-        global $USER;
-
-        if (method_exists($badge, 'update')) {
-            $badge->update($data);
-            return;
-        }
-
-        $badge->usermodified = $USER->id;
-        $badge->name = trim($data->name);
-        $badge->version = trim($data->version);
-        $badge->language = $data->language;
-        $badge->description = $data->description;
-        $badge->imageauthorname = $data->imageauthorname;
-        $badge->imageauthoremail = $data->imageauthoremail;
-        $badge->imageauthorurl = $data->imageauthorurl;
-        $badge->imagecaption = $data->imagecaption;
-        $badge->issuername = $data->issuername;
-        $badge->issuerurl = $data->issuerurl;
-        $badge->issuercontact = $data->issuercontact;
-        $badge->expiredate = $data->expiry == 1 ? $data->expiredate : null;
-        $badge->expireperiod = $data->expiry == 2 ? $data->expireperiod : null;
-        $badge->save();
-
-        \core_tag_tag::set_item_tags('core_badges', 'badge', $badge->id, $badge->get_context(), $data->tags);
-    }
-
-    /**
-     * Apply a badge-message update with runtime fallbacks for older supported branches.
-     *
-     * @param badge $badge Badge object.
-     * @param stdClass $data Message payload.
-     * @return void
-     */
-    private function apply_badge_message_update(badge $badge, stdClass $data): void {
-        global $USER;
-
-        if (method_exists($badge, 'update_message')) {
-            $badge->update_message($data);
-            return;
-        }
-
-        if ($data->notification != $badge->notification) {
-            if ($data->notification > BADGE_MESSAGE_ALWAYS) {
-                $badge->nextcron = \badges_calculate_message_schedule($data->notification);
-            } else {
-                $badge->nextcron = null;
-            }
-        }
-
-        $badge->usermodified = $USER->id;
-        $badge->messagesubject = $data->messagesubject;
-        $badge->message = clean_text($data->message_editor['text'], FORMAT_HTML);
-        $badge->notification = $data->notification;
-        $badge->attachment = $data->attachment;
-        $badge->save();
-    }
-
-    /**
-     * Resolve the effective expiry tuple for create/update flows.
-     *
-     * @param array $payload Raw payload.
-     * @param badge|null $existing Existing badge.
-     * @return array
-     */
-    private function badge_expiry_values(array $payload, ?badge $existing): array {
-        $expiry = isset($payload['expiry']) ? (int)$payload['expiry'] : null;
-        $expiredate = isset($payload['expiredate']) ? (int)$payload['expiredate'] : null;
-        $expireperiod = isset($payload['expireperiod']) ? (int)$payload['expireperiod'] : null;
-
-        if ($expiry === null && $existing) {
-            if (!empty($existing->expiredate)) {
-                $expiry = 1;
-                $expiredate = (int)$existing->expiredate;
-            } else if (!empty($existing->expireperiod)) {
-                $expiry = 2;
-                $expireperiod = (int)$existing->expireperiod;
-            } else {
-                $expiry = 0;
-            }
-        }
-
-        $expiry ??= 0;
-        return [$expiry, $expiredate, $expireperiod];
-    }
-
-    /**
-     * Create a badge using the most compatible path for the current Moodle branch.
-     *
-     * @param stdClass $data Normalized badge payload.
-     * @param int|null $courseid Optional course id for course badges.
-     * @return badge
-     */
-    private function create_badge_record(stdClass $data, ?int $courseid = null): badge {
-        global $DB, $USER;
-
-        if (method_exists(badge::class, 'create_badge')) {
-            return badge::create_badge($data, $courseid);
-        }
-
-        $now = time();
-        $record = (object)[
-            'courseid' => $courseid,
-            'type' => $courseid ? BADGE_TYPE_COURSE : BADGE_TYPE_SITE,
-            'name' => trim($data->name),
-            'description' => $data->description,
-            'timecreated' => $now,
-            'timemodified' => $now,
-            'usercreated' => $USER->id,
-            'usermodified' => $USER->id,
-            'issuername' => $data->issuername,
-            'issuerurl' => $data->issuerurl,
-            'issuercontact' => $data->issuercontact,
-            'expiredate' => $data->expiry == 1 ? $data->expiredate : null,
-            'expireperiod' => $data->expiry == 2 ? $data->expireperiod : null,
-            'messagesubject' => get_string('messagesubject', 'badges'),
-            'message' => get_string('messagebody', 'badges', html_writer::link(
-                $this->wwwroot() . '/badges/mybadges.php',
-                get_string('managebadges', 'badges')
-            )),
-            'attachment' => 1,
-            'notification' => BADGE_MESSAGE_NEVER,
-            'status' => BADGE_STATUS_INACTIVE,
-            'version' => $data->version,
-            'language' => $data->language,
-            'imageauthorname' => $data->imageauthorname,
-            'imageauthoremail' => $data->imageauthoremail,
-            'imageauthorurl' => $data->imageauthorurl,
-            'imagecaption' => $data->imagecaption,
-        ];
-
-        $record->id = $DB->insert_record('badge', $record, true);
-        $badge = new badge($record->id);
-
-        $event = \core\event\badge_created::create([
-            'objectid' => $badge->id,
-            'context' => $badge->get_context(),
-        ]);
-        $event->trigger();
-
-        \core_tag_tag::set_item_tags('core_badges', 'badge', $badge->id, $badge->get_context(), $data->tags);
-
-        return $badge;
     }
 
     /**
@@ -673,15 +555,5 @@ class badge_service {
     private function dirroot(): string {
         global $CFG;
         return $CFG->dirroot;
-    }
-
-    /**
-     * Return Moodle wwwroot.
-     *
-     * @return string
-     */
-    private function wwwroot(): string {
-        global $CFG;
-        return $CFG->wwwroot;
     }
 }

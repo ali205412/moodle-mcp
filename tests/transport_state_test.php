@@ -21,8 +21,6 @@ use webservice_mcp\local\stream\replay_store;
 use webservice_mcp\local\stream\session_store;
 use webservice_mcp\local\transport\origin_validator;
 
-defined('MOODLE_INTERNAL') || die();
-
 /**
  * Tests for transport policy and state helpers.
  *

@@ -24,8 +24,6 @@ use webservice_mcp\local\auth\bootstrap_service;
 use webservice_mcp\local\auth\connector_service_manager;
 use webservice_mcp\local\auth\oauth_bridge;
 
-defined('MOODLE_INTERNAL') || die();
-
 /**
  * Tests for MCP launch/bootstrap auth helpers.
  *
@@ -115,12 +113,53 @@ final class launch_test extends advanced_testcase {
         $this->assertSame(1, (int)$service->restrictedusers);
         $this->assertSame(1, (int)$service->downloadfiles);
         $this->assertSame(1, (int)$service->uploadfiles);
-        $this->assertSame('webservice_mcp', (string)$service->component);
+        $this->assertSame((int)$service->id, (int)get_config('webservice_mcp', 'connectorserviceid'));
         $this->assertNotEmpty($alloweduser);
         $this->assertTrue($DB->record_exists('external_services_functions', [
             'externalserviceid' => $service->id,
             'functionname' => 'core_webservice_get_site_info',
         ]));
+    }
+
+    /**
+     * Test a login-as session cannot bootstrap credentials for the impersonated user.
+     */
+    public function test_bootstrap_refused_when_logged_in_as(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+
+        $user = $this->getDataGenerator()->create_user();
+        $roleid = $this->getDataGenerator()->create_role();
+        assign_capability('webservice/mcp:use', CAP_ALLOW, $roleid, context_system::instance());
+        role_assign($roleid, $user->id, context_system::instance());
+        accesslib_clear_all_caches_for_unit_testing();
+
+        $this->setAdminUser();
+        \core\session\manager::loginas($user->id, context_system::instance());
+
+        try {
+            (new bootstrap_service())->issue_bootstrap_for_current_user();
+            $this->fail('Login-as must not issue credentials.');
+        } catch (\moodle_exception $exception) {
+            $this->assertSame('loginasnotallowed', $exception->errorcode);
+        }
+        $this->assertSame(0, $DB->count_records('webservice_mcp_credential', ['userid' => $user->id]));
+    }
+
+    /**
+     * Test site administrators are refused when the site disallows them.
+     */
+    public function test_bootstrap_refused_for_site_admin_when_disallowed(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+
+        $service = new bootstrap_service();
+        $service->require_bootstrap_access();
+
+        set_config('allowsiteadmins', 0, 'webservice_mcp');
+        $this->expectException(\moodle_exception::class);
+        $service->require_bootstrap_access();
     }
 
     /**

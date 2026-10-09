@@ -61,6 +61,12 @@ class transport_identity {
             return null;
         }
 
+        // The same service, user, family and OAuth checks that file tickets and cron tasks re-run later.
+        $serviceid = (int)$DB->get_field('external_services', 'id', ['shortname' => $credential->serviceidentifier]);
+        if (service_access::problem((int)$credential->userid, $serviceid, credential_manager::family_key($credential)) !== null) {
+            return null;
+        }
+
         $user = $DB->get_record('user', ['id' => $credential->userid], '*', MUST_EXIST);
         $context = context::instance_by_id((int)$credential->contextid);
 
@@ -74,6 +80,8 @@ class transport_identity {
             'resourceuri' => !empty($credential->resourceuri) ? (string)$credential->resourceuri : null,
             'oauthclientid' => !empty($credential->oauthclientid) ? (string)$credential->oauthclientid : null,
             'credential' => $credential,
+            'credentialid' => (int)$credential->id,
+            'familyid' => credential_manager::family_key($credential),
         ];
     }
 }

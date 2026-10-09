@@ -35,6 +35,8 @@ use webservice_mcp\local\auth\transport_identity;
 use webservice_mcp\local\request;
 use webservice_mcp\local\transport\protocol_headers;
 
+defined('MOODLE_INTERNAL') || die();
+
 require_once(__DIR__ . '/fixtures/flow_test_transport_server.php');
 
 /**
@@ -85,6 +87,7 @@ final class connector_flow_test extends advanced_testcase {
             'uploadfiles' => 0,
         ];
         $serviceid = $DB->insert_record('external_services', $service);
+        set_config('connectorserviceid', $serviceid, 'webservice_mcp');
         $DB->insert_record('external_services_functions', (object)[
             'externalserviceid' => $serviceid,
             'functionname' => 'core_webservice_get_site_info',
@@ -107,19 +110,19 @@ final class connector_flow_test extends advanced_testcase {
             'jsonrpc' => '2.0',
             'method' => 'tools/list',
             'id' => 101,
-            'params' => ['limit' => 250],
+            'params' => [],
         ]));
 
-        $server->send_tools_list_for_test();
+        $server->dispatch_for_test();
         $listpayload = json_decode($server->capturedbody, true);
         $tools = array_column($listpayload['result']['tools'], null, 'name');
         $harvestedtools = array_filter(
             array_keys($tools),
-            static fn(string $toolname): bool => !str_starts_with($toolname, 'wrapper_')
+            static fn(string $toolname): bool => str_starts_with($toolname, 'core_')
         );
 
         $this->assertEmpty($harvestedtools);
-        $this->assertNotEmpty($listpayload['result']['audit']['id']);
+        $this->assertNotEmpty($listpayload['result']['_meta']['org.moodle/auditId']);
         $this->assertArrayHasKey('wrapper_course_create_missing_sections', $tools);
 
         $server->reset_capture_for_test();
@@ -127,16 +130,15 @@ final class connector_flow_test extends advanced_testcase {
             'jsonrpc' => '2.0',
             'method' => 'tools/call',
             'id' => 102,
-            'params' => ['name' => 'wrapper_course_create_missing_sections'],
+            'params' => ['name' => 'wrapper_course_create_missing_sections', 'arguments' => [
+                'courseid' => $course->id,
+                'sectionnums' => [1, 2],
+            ]],
         ]));
-        $server->set_tool_call_for_test('wrapper_course_create_missing_sections', [
-            'courseid' => $course->id,
-            'sectionnums' => [1, 2],
-        ]);
-        $server->execute_wrapper_tool_for_test();
+        $server->dispatch_for_test();
         $callpayload = json_decode($server->capturedbody, true);
 
-        $this->assertNotEmpty($callpayload['result']['audit']['id']);
+        $this->assertNotEmpty($callpayload['result']['_meta']['org.moodle/auditId']);
         $this->assertTrue($callpayload['result']['structuredContent']['result']['status']);
         $this->assertCount(2, $callpayload['result']['structuredContent']['result']['sections']);
     }

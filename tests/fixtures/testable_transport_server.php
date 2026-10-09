@@ -57,6 +57,48 @@ final class testable_transport_server extends transport_server {
     /** @var int */
     public int $capturedstatus = 200;
 
+    /** @var string|null Injected raw JSON body for run(). */
+    public ?string $rawbody = null;
+
+    /**
+     * The injected body when set, otherwise the real request.
+     *
+     * @return request
+     */
+    protected function read_request(): request {
+        if ($this->rawbody === null) {
+            return parent::read_request();
+        }
+        $data = json_decode($this->rawbody, true);
+        if (!is_array($data)) {
+            throw new \moodle_exception('err_invalid_json', 'webservice_mcp', '', null, 'JSON parsing error');
+        }
+        return new request($data);
+    }
+
+    /**
+     * Route the current request and emit the response, as run() does after authentication.
+     *
+     * @param string $era Protocol era.
+     * @param string $version Negotiated protocol version.
+     * @param array $capabilities Client capabilities.
+     * @return void
+     */
+    public function dispatch_for_test(string $era = 'legacy', string $version = '2025-06-18', array $capabilities = []): void {
+        $this->era = $era;
+        $this->dispatch_and_respond($era, $version, $capabilities);
+    }
+
+    /**
+     * Expose the OAuth scope check.
+     *
+     * @param bool $write Whether write scope is needed.
+     * @return void
+     */
+    public function scope_check_for_test(bool $write): void {
+        $this->scope_check($write);
+    }
+
     /**
      * Apply a public token without reading request globals.
      *
@@ -138,32 +180,8 @@ final class testable_transport_server extends transport_server {
         $this->release_transport_session();
     }
 
-    /**
-     * Invoke the protected tools/list response helper.
-     *
-     * @return void
-     */
-    public function send_tools_list_for_test(): void {
-        $this->send_tools_list_response();
-    }
 
-    /**
-     * Invoke the protected wrapper execution helper.
-     *
-     * @return void
-     */
-    public function execute_wrapper_tool_for_test(): void {
-        $this->execute_wrapper_tool();
-    }
 
-    /**
-     * Invoke the protected transport method execution helper.
-     *
-     * @return void
-     */
-    public function handle_transport_method_for_test(): void {
-        $this->handle_transport_method();
-    }
 
     /**
      * Invoke protected error generation for assertions.
@@ -185,15 +203,6 @@ final class testable_transport_server extends transport_server {
         $this->send_error($exception);
     }
 
-    /**
-     * Invoke the protected OAuth scope guard for assertions.
-     *
-     * @param bool $write Whether write scope is required.
-     * @return bool
-     */
-    public function ensure_oauth_scope_for_test(bool $write): bool {
-        return $this->ensure_oauth_scope($write);
-    }
 
     /**
      * Intercept auth during request-lifecycle tests.
@@ -204,6 +213,9 @@ final class testable_transport_server extends transport_server {
         $this->authcalled = true;
 
         if ($this->stubauthentication) {
+            global $USER;
+            $this->userid = $USER->id;
+            $this->restricted_context = \context_system::instance();
             return;
         }
 

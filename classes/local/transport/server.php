@@ -19,23 +19,30 @@ declare(strict_types=1);
 namespace webservice_mcp\local\transport;
 
 use context_system;
+use core_external\external_api;
 use core_external\restricted_context_exception;
 use core\session\manager as session_manager;
-use core_external\external_api;
 use moodle_exception;
 use stdClass;
 use webservice_mcp\local\audit\logger as audit_logger;
 use webservice_mcp\local\auth\transport_identity;
+use webservice_mcp\local\mcp\call_context;
+use webservice_mcp\local\mcp\dispatcher;
+use webservice_mcp\local\mcp\protocol_exception;
 use webservice_mcp\local\oauth\service as oauth_service;
 use webservice_mcp\local\request;
 use webservice_mcp\local\server as legacy_server;
 use webservice_mcp\local\stream\replay_store;
 use webservice_mcp\local\stream\session_store;
-use webservice_mcp\local\tool_provider;
 use webservice_mcp\local\wrapper\manager as wrapper_manager;
 
 /**
- * Primary Streamable HTTP transport implementation.
+ * Streamable HTTP transport serving both MCP eras on one endpoint.
+ *
+ * Requests carrying io.modelcontextprotocol/protocolVersion in params._meta are served
+ * statelessly (2026-07-28). An initialize request selects initialize/session semantics
+ * (2024-11-05 .. 2025-11-25). Protocol semantics live in {@see dispatcher}; this class owns
+ * HTTP, authentication, sessions, scope enforcement, audit and tool execution.
  *
  * @package     webservice_mcp
  * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
@@ -47,9 +54,12 @@ class server extends legacy_server {
     /** Primary endpoint allowed methods. */
     protected const ALLOW = 'POST, OPTIONS, DELETE, HEAD';
 
-    /** HTTP methods used during CORS negotiation. */
+    /** Headers accepted during CORS negotiation. */
     protected const ALLOW_HEADERS = 'Accept, Content-Type, Authorization, X-Requested-With, '
         . 'MCP-Protocol-Version, MCP-Session-Id, Mcp-Method, Mcp-Name, Last-Event-ID';
+
+    /** Insufficient OAuth scope error code (outside the spec-reserved range). */
+    protected const INSUFFICIENT_SCOPE = -32003;
 
     /** @var origin_validator */
     protected origin_validator $originvalidator;
@@ -72,10 +82,10 @@ class server extends legacy_server {
     /** @var array */
     protected array $rawheaders = [];
 
-    /** @var array|null */
+    /** @var array|null Legacy header validation result. */
     protected ?array $transportrequest = null;
 
-    /** @var array|null */
+    /** @var array|null Legacy transport session. */
     protected ?array $transportsession = null;
 
     /** @var string|null */
@@ -84,8 +94,14 @@ class server extends legacy_server {
     /** @var string|null */
     protected ?string $publictoken = null;
 
-    /** @var stdClass|null */
+    /** @var stdClass|null Plugin credential identity (connector mode). */
     protected ?stdClass $transportidentity = null;
+
+    /** @var string Era of the current request. */
+    protected string $era = call_context::ERA_LEGACY;
+
+    /** @var bool|null Whether the current tools/call target mutates state. */
+    protected ?bool $currentmutating = null;
 
     /**
      * Constructor.
@@ -117,7 +133,7 @@ class server extends legacy_server {
     }
 
     /**
-     * Run the Streamable HTTP transport flow.
+     * Run the transport for one HTTP request.
      *
      * @return void
      */
@@ -134,103 +150,28 @@ class server extends legacy_server {
             $this->send_transport_error(403, -32000, 'Origin not allowed.');
             return;
         }
-
         $this->responseorigin = $this->originvalidator->get_response_origin($origin);
 
         try {
-            if ($this->httpmethod === 'OPTIONS') {
-                $this->send_preflight_response();
-                return;
-            }
-
-            $this->token = $this->extract_token();
-            if (empty($this->token)) {
-                throw new \moodle_exception('invalidtoken', 'webservice');
-            }
-
-            if ($this->httpmethod === 'DELETE') {
-                if (!$this->prepare_stateful_request()) {
+            switch ($this->httpmethod) {
+                case 'OPTIONS':
+                    $this->send_preflight_response();
                     return;
-                }
-
-                $this->authenticate_user();
-                $this->release_transport_session();
-                $this->handle_delete_request();
-                return;
-            }
-
-            if ($this->httpmethod === 'GET') {
-                $this->send_method_not_allowed();
-                return;
-            }
-
-            if ($this->httpmethod === 'HEAD') {
-                $this->handle_head_request();
-                return;
-            }
-
-            if ($this->httpmethod !== 'POST') {
-                $this->send_method_not_allowed();
-                return;
-            }
-
-            $this->emit_json_headers();
-
-            try {
-                $this->parse_request();
-            } catch (\Throwable $exception) {
-                $this->send_transport_error(400, -32600, $exception->getMessage());
-                return;
-            }
-
-            if (!$this->transportrequest['ok']) {
-                $this->send_transport_error(
-                    $this->transportrequest['status'],
-                    $this->transportrequest['errorcode'],
-                    $this->transportrequest['message'],
-                    $this->mcprequest?->id ?? null
-                );
-                return;
-            }
-
-            $this->authenticate_user();
-            $this->release_transport_session();
-
-            if (!empty($this->transportrequest['initialization'])) {
-                if (!$this->ensure_oauth_scope(false)) {
-                    $this->session_cleanup();
+                case 'HEAD':
+                    $this->handle_head_request();
                     return;
-                }
-                $this->send_initialize_response();
-                $this->session_cleanup();
-                return;
+                case 'DELETE':
+                    $this->handle_delete();
+                    return;
+                case 'POST':
+                    $this->handle_post();
+                    return;
+                default:
+                    // No standalone GET stream: 2026-07-28 removed it and legacy servers may answer 405.
+                    $this->send_method_not_allowed();
             }
-
-            if (!$this->load_transport_session_or_respond((string)$this->transportrequest['sessionid'])) {
-                $this->session_cleanup();
-                return;
-            }
-
-            if (empty($this->functionname)) {
-                $this->handle_transport_method();
-                $this->session_cleanup();
-                return;
-            }
-
-            if ($this->should_execute_wrapper()) {
-                $this->execute_wrapper_tool();
-                $this->session_cleanup();
-                return;
-            }
-
-            $this->load_function_info();
-            if (!$this->ensure_external_function_scope()) {
-                $this->session_cleanup();
-                return;
-            }
-            $this->execute();
-            $this->send_response();
-            $this->session_cleanup();
+        } catch (protocol_exception $exception) {
+            $this->send_protocol_error($exception, $this->mcprequest?->id ?? null);
         } catch (\Throwable $exception) {
             abort_all_db_transactions();
             $this->session_cleanup($exception);
@@ -239,25 +180,297 @@ class server extends legacy_server {
     }
 
     /**
-     * Parse the incoming POST request.
+     * Handle a JSON-RPC POST of either era.
      *
      * @return void
      */
-    protected function parse_request(): void {
+    protected function handle_post(): void {
+        $this->emit_json_headers();
         parent::set_web_service_call_settings();
+
+        try {
+            $this->mcprequest = $this->read_request();
+        } catch (\Throwable $exception) {
+            $code = ($exception instanceof moodle_exception && $exception->errorcode === 'err_invalid_json')
+                ? protocol_exception::PARSE_ERROR
+                : protocol_exception::INVALID_REQUEST;
+            $message = $exception instanceof moodle_exception && !empty($exception->debuginfo)
+                ? $exception->debuginfo
+                : 'Invalid Request';
+            $this->send_transport_error(400, $code, $message);
+            return;
+        }
+
+        $metaversion = $this->mcprequest->params['_meta']['io.modelcontextprotocol/protocolVersion'] ?? null;
+        if (is_string($metaversion)) {
+            $this->era = call_context::ERA_MODERN;
+            $this->handle_modern_request($metaversion);
+            return;
+        }
+
+        $this->era = call_context::ERA_LEGACY;
+        $this->handle_legacy_request();
+    }
+
+    /**
+     * Read and validate the JSON-RPC body (seam for tests).
+     *
+     * @return request
+     */
+    protected function read_request(): request {
+        return request::from_raw_input();
+    }
+
+    /**
+     * Serve a stateless 2026-07-28 request.
+     *
+     * @param string $version Requested protocol version from _meta.
+     * @return void
+     */
+    protected function handle_modern_request(string $version): void {
+        $request = $this->mcprequest;
+
+        if (!in_array($version, dispatcher::MODERN_VERSIONS, true)) {
+            throw new protocol_exception(
+                protocol_exception::UNSUPPORTED_PROTOCOL_VERSION,
+                'Unsupported protocol version: ' . $version,
+                400,
+                ['supported' => dispatcher::supported_versions(), 'requested' => $version]
+            );
+        }
+
+        if ($error = $this->protocolheaders->validate_modern($this->rawheaders, $request, $version)) {
+            throw new protocol_exception(protocol_exception::HEADER_MISMATCH, $error, 400);
+        }
+
+        if ($request->id === null) {
+            // The only core client notification (cancelled) is stdio-only; accept and ignore.
+            $this->set_status(202);
+            return;
+        }
+
+        $meta = $request->params['_meta'];
+        $capabilities = is_array($meta['io.modelcontextprotocol/clientCapabilities'] ?? null)
+            ? $meta['io.modelcontextprotocol/clientCapabilities'] : [];
+
+        if ($request->method === 'server/discover') {
+            $dispatcher = new dispatcher(new call_context(call_context::ERA_MODERN, $version));
+            $this->send_result($dispatcher->dispatch('server/discover', []));
+            return;
+        }
+
+        $this->authenticate_request();
+        $this->dispatch_and_respond(call_context::ERA_MODERN, $version, $capabilities);
+        $this->session_cleanup();
+    }
+
+    /**
+     * Serve an initialize/session request (2024-11-05 .. 2025-11-25).
+     *
+     * @return void
+     */
+    protected function handle_legacy_request(): void {
+        $this->transportrequest = $this->protocolheaders->validate($this->httpmethod, $this->rawheaders, $this->mcprequest);
+        if (!$this->transportrequest['ok']) {
+            $this->send_transport_error(
+                $this->transportrequest['status'],
+                $this->transportrequest['errorcode'],
+                $this->transportrequest['message'],
+                $this->mcprequest->id
+            );
+            return;
+        }
+
+        $this->authenticate_request();
+
+        if (!empty($this->transportrequest['initialization'])) {
+            $this->scope_check(false);
+            $this->send_initialize_response();
+            $this->session_cleanup();
+            return;
+        }
+
+        if (!$this->load_transport_session_or_respond((string)$this->transportrequest['sessionid'])) {
+            $this->session_cleanup();
+            return;
+        }
+
+        $this->handle_transport_method();
+        $this->session_cleanup();
+    }
+
+    /**
+     * Dispatch a legacy request after session validation.
+     *
+     * @return void
+     */
+    protected function handle_transport_method(): void {
+        if ($this->mcprequest->id === null) {
+            $this->sessionstore->touch_session((string)$this->transportrequest['sessionid'], [
+                'lastnotification' => $this->mcprequest->method,
+            ]);
+            $this->set_status(202);
+            return;
+        }
+
+        if ($this->mcprequest->method === 'initialize') {
+            throw new protocol_exception(
+                protocol_exception::INVALID_REQUEST,
+                'Initialize must start a new transport session.',
+                400
+            );
+        }
+
+        $this->dispatch_and_respond(
+            call_context::ERA_LEGACY,
+            (string)($this->transportsession['protocolversion'] ?? protocol_headers::DEFAULT_PROTOCOL_VERSION),
+            (array)($this->transportsession['clientcapabilities'] ?? [])
+        );
+    }
+
+    /**
+     * Run the dispatcher for the current request and emit the JSON-RPC response.
+     *
+     * @param string $era Era.
+     * @param string $version Protocol version.
+     * @param array $capabilities Client capabilities.
+     * @return void
+     */
+    protected function dispatch_and_respond(string $era, string $version, array $capabilities): void {
+        $method = $this->mcprequest->method;
+        $params = $this->mcprequest->params ?? [];
+
+        if ($method === 'tools/call') {
+            $this->functionname = is_string($params['name'] ?? null) ? $params['name'] : '';
+        }
+
+        $result = $this->dispatcher($era, $version, $capabilities)->dispatch($method, $params);
+
+        $action = match ($method) {
+            'tools/list' => 'discover',
+            'tools/call' => 'tool_call',
+            default => null,
+        };
+        if ($action !== null && ($result['resultType'] ?? 'complete') === 'complete') {
+            $auditid = $this->record_audit_event(
+                $action,
+                $action === 'tool_call' ? $this->functionname : null,
+                $action === 'tool_call' && $this->current_request_is_mutating(),
+                empty($result['isError']) ? 'success' : 'error',
+                $result['_meta']['org.moodle/errorcode'] ?? null
+            );
+            if ($auditid) {
+                $result['_meta']['org.moodle/auditId'] = $auditid;
+            }
+        }
+
+        $this->send_result($result);
+    }
+
+    /**
+     * Build the dispatcher for the authenticated request.
+     *
+     * @param string $era Era.
+     * @param string $version Protocol version.
+     * @param array $capabilities Client capabilities.
+     * @return dispatcher
+     */
+    protected function dispatcher(string $era, string $version, array $capabilities): dispatcher {
+        global $USER;
+
+        $ctx = new call_context(
+            $era,
+            $version,
+            $this->transportidentity->user ?? $USER,
+            $this->restricted_context,
+            $this->restricted_serviceid ? (int)$this->restricted_serviceid : null,
+            $this->transportidentity !== null,
+            $this->connector_mode(),
+            $capabilities,
+            isset($this->transportidentity->familyid) ? (string)$this->transportidentity->familyid : null,
+            fn(bool $write) => $this->scope_check($write)
+        );
+
+        return new dispatcher($ctx, fn(string $name, array $arguments): array => $this->execute_tool($name, $arguments));
+    }
+
+    /**
+     * Execute a wrapper or harvested external function as the current user.
+     *
+     * @param string $name Tool name.
+     * @param array $arguments Tool arguments.
+     * @return array Structured payload ['result' => mixed].
+     */
+    protected function execute_tool(string $name, array $arguments): array {
+        global $USER;
+
+        $this->functionname = $name;
+        $this->parameters = $arguments;
+
+        if ($this->transportidentity !== null) {
+            $wrappers = new wrapper_manager();
+            if ($wrappers->find($name) !== null) {
+                $this->currentmutating = $wrappers->is_mutating($name, $arguments);
+                $this->scope_check($this->currentmutating);
+                $this->trigger_function_called($name);
+                return ['result' => $wrappers->execute(
+                    $name,
+                    $arguments,
+                    $this->restricted_context,
+                    $this->transportidentity->user ?? $USER,
+                    (int)$this->restricted_serviceid
+                )];
+            }
+        }
+
+        try {
+            $this->load_function_info();
+        } catch (\dml_missing_record_exception | \invalid_parameter_exception $exception) {
+            throw new protocol_exception(protocol_exception::INVALID_PARAMS, 'Unknown tool: ' . $name);
+        }
+
+        // Fail closed: anything not explicitly typed as read needs write scope.
+        $this->currentmutating = (string)($this->function->type ?? '') !== 'read';
+        $this->scope_check($this->currentmutating);
+        $this->trigger_function_called($name);
+
+        $this->execute();
+
+        return ['result' => $this->function->returns_desc !== null
+            ? external_api::clean_returnvalue($this->function->returns_desc, $this->returns)
+            : $this->returns];
+    }
+
+    /**
+     * Log the call in Moodle's standard logs, as core web services do.
+     *
+     * @param string $name Function or wrapper name.
+     * @return void
+     */
+    protected function trigger_function_called(string $name): void {
+        \core\event\webservice_function_called::create(['other' => ['function' => $name]])->trigger();
+    }
+
+    /**
+     * Authenticate the bearer token and apply Moodle's request setup.
+     *
+     * @return void
+     */
+    protected function authenticate_request(): void {
+        global $CFG, $SESSION;
 
         $this->token = $this->extract_token();
         $this->publictoken = $this->token;
+        if (empty($this->token)) {
+            throw new moodle_exception('invalidtoken', 'webservice');
+        }
 
-        $this->mcprequest = request::from_raw_input();
-        $this->transportrequest = $this->protocolheaders->validate(
-            $this->httpmethod,
-            $this->rawheaders,
-            $this->mcprequest
-        );
+        $this->authenticate_user();
+        $this->release_transport_session();
 
-        if ($this->transportrequest['ok'] && $this->is_tool_call()) {
-            $this->extract_tool_call();
+        setup_lang_from_browser();
+        if (empty($CFG->lang)) {
+            $CFG->lang = empty($SESSION->lang) ? 'en' : $SESSION->lang;
         }
     }
 
@@ -297,8 +510,10 @@ class server extends legacy_server {
             throw new moodle_exception('servicenotavailable', 'webservice');
         }
 
-        if ($service->requiredcapability &&
-                !has_capability($service->requiredcapability, context_system::instance(), $user)) {
+        if (
+            $service->requiredcapability &&
+                !has_capability($service->requiredcapability, context_system::instance(), $user)
+        ) {
             throw new \webservice_access_exception('The capability ' . $service->requiredcapability . ' is required.');
         }
 
@@ -318,8 +533,10 @@ class server extends legacy_server {
                 throw new \webservice_access_exception('Invalid service - service expired for this user.');
             }
 
-            if (!empty($authoriseduser->iprestriction) &&
-                    !address_in_subnet(getremoteaddr(), $authoriseduser->iprestriction)) {
+            if (
+                !empty($authoriseduser->iprestriction) &&
+                    !address_in_subnet(getremoteaddr(), $authoriseduser->iprestriction)
+            ) {
                 throw new \webservice_access_exception('Invalid service - IP is not supported for this user.');
             }
         }
@@ -363,13 +580,17 @@ class server extends legacy_server {
         $this->restricted_context = $identity->restrictedcontext;
         $this->restricted_serviceid = (int)$service->id;
 
-        if (!empty($identity->resourceuri) &&
-                !hash_equals((new oauth_service())->canonical_resource_uri(), (string)$identity->resourceuri)) {
+        if (
+            !empty($identity->resourceuri) &&
+                !hash_equals((new oauth_service())->canonical_resource_uri(), (string)$identity->resourceuri)
+        ) {
             throw new moodle_exception('invalidtoken', 'webservice');
         }
 
-        if ($this->authmethod !== WEBSERVICE_AUTHMETHOD_SESSION_TOKEN &&
-                !has_capability("webservice/{$this->wsname}:use", $this->restricted_context, $user)) {
+        if (
+            $this->authmethod !== WEBSERVICE_AUTHMETHOD_SESSION_TOKEN &&
+                !has_capability("webservice/{$this->wsname}:use", $this->restricted_context, $user)
+        ) {
             throw new \webservice_access_exception(
                 "You are not allowed to use the {$this->wsname} protocol "
                 . "(missing capability: webservice/{$this->wsname}:use)"
@@ -380,279 +601,79 @@ class server extends legacy_server {
     }
 
     /**
-     * Send the initialize response and issue a transport session id.
+     * Send the legacy initialize result and always mint a fresh session id.
      *
      * @return void
      */
     protected function send_initialize_response(): void {
-        $sessionid = $this->transportrequest['sessionid'] ?? null;
-        if ($sessionid === null) {
-            $sessionid = $this->create_transport_session();
-        } else {
-            $this->transportsession = $this->sessionstore->get_session($sessionid);
-        }
+        $version = $this->negotiate_protocol_version();
+        $capabilities = $this->mcprequest->params['capabilities'] ?? [];
+        $sessionid = $this->create_transport_session(is_array($capabilities) ? $capabilities : []);
 
-        $protocolversion = $this->negotiate_protocol_version();
-
-        $result = [
-            'protocolVersion' => $protocolversion,
-            'capabilities' => [
-                'tools' => ['listChanged' => true],
-            ],
-            'serverInfo' => [
-                'name' => static::SERVER_NAME,
-                'version' => static::SERVER_VERSION,
-            ],
-            'instructions' => 'Moodle MCP server initialized successfully',
-        ];
-
-        $payload = [
-            'jsonrpc' => $this->mcprequest->jsonrpc,
-            'id' => $this->mcprequest->id,
-            'result' => $result,
-        ];
-
+        $dispatcher = $this->dispatcher(call_context::ERA_LEGACY, $version, []);
         $this->send_header('MCP-Session-Id: ' . $sessionid);
-        $this->set_status(200);
-        $this->record_transport_event($sessionid, $payload);
-        $this->emit($this->safe_json_encode($payload));
+        $this->send_result($dispatcher->initialize_result($version));
     }
 
     /**
-     * Send the tools/list response for the resolved connector service.
+     * Emit a JSON-RPC success response.
      *
+     * @param array $result Result object.
      * @return void
      */
-    protected function send_tools_list_response(): void {
-        $result = tool_provider::list_tools_for_service_ids(
-            [(int)$this->restricted_serviceid],
-            [
-                'cursor' => $this->mcprequest->params['cursor'] ?? null,
-                'limit' => $this->mcprequest->params['limit'] ?? $this->mcprequest->params['pageSize'] ?? null,
-                'group' => $this->mcprequest->params['group'] ?? null,
-                'restrictedcontext' => $this->restricted_context,
-                'user' => $this->transportidentity->user ?? ($GLOBALS['USER'] ?? null),
-                'connector_mode' => $this->connector_mode(),
-                'allow_wrappers' => $this->transportidentity !== null,
-            ]
-        );
-        $result['nextCursor'] ??= null;
-        $result['groups'] ??= [];
-        $result['coverage'] ??= [];
-        foreach ($result['tools'] as &$tool) {
-            $tool['x-moodle']['surface'] ??= ['surface' => 'general', 'area' => 'general'];
-            $tool['x-moodle']['workflow'] ??= [];
-            $tool['x-moodle']['execution'] ??= [
-                'mode' => 'sync',
-                'followupTools' => [],
-                'notes' => [],
-            ];
+    protected function send_result(array $result): void {
+        if (isset($result['_empty'])) {
+            $result = new \stdClass();
         }
-        unset($tool);
-        if ($auditid = $this->record_audit_event('discover', null, false, 'success')) {
-            $result['audit'] = ['id' => $auditid];
-        }
-
         $payload = [
-            'jsonrpc' => $this->mcprequest->jsonrpc,
+            'jsonrpc' => '2.0',
             'id' => $this->mcprequest->id,
             'result' => $result,
         ];
-
         $this->set_status(200);
-        $this->record_transport_event((string)$this->transportrequest['sessionid'], $payload);
+        $this->record_transport_event($payload);
         $this->emit($this->safe_json_encode($payload));
     }
 
     /**
-     * Send resources/list response.
-     */
-    protected function send_resources_list_response(): void {
-        global $USER;
-        $memoryservice = new \webservice_mcp\local\wrapper\memory_service();
-        $memories = $memoryservice->read_memories();
-        
-        $resources = [];
-        foreach ($memories as $memory) {
-            $resources[] = [
-                'uri' => "memory://{$memory['id']}",
-                'name' => "User Memory {$memory['id']}",
-                'mimeType' => 'text/plain',
-            ];
-        }
-        
-        $payload = [
-            'jsonrpc' => $this->mcprequest->jsonrpc,
-            'id' => $this->mcprequest->id,
-            'result' => [
-                'resources' => $resources,
-            ],
-        ];
-
-        $this->set_status(200);
-        $this->record_transport_event((string)$this->transportrequest['sessionid'], $payload);
-        $this->emit($this->safe_json_encode($payload));
-    }
-
-    /**
-     * Send resources/read response.
-     */
-    protected function send_resources_read_response(): void {
-        global $USER;
-        $uri = $this->mcprequest->params->uri ?? '';
-        
-        if (!preg_match('#^memory://(\d+)$#', $uri, $matches)) {
-            $this->send_transport_error(200, -32602, 'Invalid resource URI', $this->mcprequest->id);
-            return;
-        }
-        
-        $id = (int)$matches[1];
-        $memoryservice = new \webservice_mcp\local\wrapper\memory_service();
-        
-        try {
-            $memory = $memoryservice->read_memory_by_id($id);
-            
-            $payload = [
-                'jsonrpc' => $this->mcprequest->jsonrpc,
-                'id' => $this->mcprequest->id,
-                'result' => [
-                    'contents' => [
-                        [
-                            'uri' => $uri,
-                            'mimeType' => 'text/plain',
-                            'text' => $memory['content'],
-                        ],
-                    ],
-                ],
-            ];
-            
-            $this->set_status(200);
-            $this->record_transport_event((string)$this->transportrequest['sessionid'], $payload);
-            $this->emit($this->safe_json_encode($payload));
-            
-        } catch (\Throwable $e) {
-            $this->send_transport_error(200, -32602, 'Resource not found or unauthorized', $this->mcprequest->id);
-        }
-    }
-
-    /**
-     * Send prompts/list response.
-     */
-    protected function send_prompts_list_response(): void {
-        $payload = [
-            'jsonrpc' => $this->mcprequest->jsonrpc,
-            'id' => $this->mcprequest->id,
-            'result' => [
-                'prompts' => [
-                    [
-                        'name' => 'system_guidance',
-                        'description' => 'Specialized instructions for MCP Moodle integrations.',
-                        'arguments' => []
-                    ]
-                ],
-            ],
-        ];
-        
-        $this->set_status(200);
-        $this->record_transport_event((string)$this->transportrequest['sessionid'], $payload);
-        $this->emit($this->safe_json_encode($payload));
-    }
-
-    /**
-     * Send prompts/get response.
-     */
-    protected function send_prompts_get_response(): void {
-        $name = $this->mcprequest->params->name ?? '';
-        
-        if ($name !== 'system_guidance') {
-            $this->send_transport_error(200, -32602, 'Prompt not found', $this->mcprequest->id);
-            return;
-        }
-        
-        $payload = [
-            'jsonrpc' => $this->mcprequest->jsonrpc,
-            'id' => $this->mcprequest->id,
-            'result' => [
-                'description' => 'Specialized instructions for MCP Moodle integrations.',
-                'messages' => [
-                    [
-                        'role' => 'user',
-                        'content' => [
-                            'type' => 'text',
-                            'text' => 'You are connected to Moodle via MCP. Use provided tools cautiously.'
-                        ]
-                    ]
-                ],
-            ],
-        ];
-        
-        $this->set_status(200);
-        $this->record_transport_event((string)$this->transportrequest['sessionid'], $payload);
-        $this->emit($this->safe_json_encode($payload));
-    }
-
-    /**
-     * Send a successful tools/call response and store it for replay.
+     * Emit a protocol error with its HTTP status (and scope challenge where relevant).
      *
+     * @param protocol_exception $exception Error.
+     * @param mixed $id Request id.
      * @return void
      */
-    protected function send_response(): void {
-        $validatedvalues = null;
-        $exception = null;
+    protected function send_protocol_error(protocol_exception $exception, mixed $id): void {
+        $this->emit_json_headers();
+        if ($exception->rpccode === self::INSUFFICIENT_SCOPE) {
+            $this->send_header('WWW-Authenticate: ' . $this->oauth_service()->build_bearer_challenge(
+                'insufficient_scope',
+                'The presented access token does not grant the required scope.',
+                (string)($exception->data['requiredScope'] ?? '')
+            ));
+        }
+        $this->set_status($exception->httpstatus);
 
-        try {
-            if ($this->function->returns_desc !== null) {
-                $validatedvalues = external_api::clean_returnvalue(
-                    $this->function->returns_desc,
-                    $this->returns
-                );
-            } else {
-                $validatedvalues = $this->returns;
-            }
-        } catch (\Exception $exception) {
-            // Handled below.
+        $error = ['code' => $exception->rpccode, 'message' => $exception->getMessage()];
+        if ($exception->data !== null) {
+            $error['data'] = $exception->data;
+        }
+        if (
+            in_array($exception->httpstatus, [401, 403], true) && ($auditid = $this->record_audit_event(
+                $this->audit_action_name(),
+                $this->functionname ?: null,
+                (bool)$this->currentmutating,
+                'error',
+                $exception->rpccode === self::INSUFFICIENT_SCOPE ? 'insufficient_scope' : 'protocol_error'
+            ))
+        ) {
+            $error['data']['auditId'] = $auditid;
         }
 
-        if ($exception !== null) {
-            $this->send_error($exception);
-            return;
-        }
-
-        $validatedvalues = [
-            'result' => $validatedvalues,
-        ];
-
-        $content = [
-            'type' => 'text',
-            'text' => json_encode($validatedvalues, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-        ];
-
-        $result = [
-            'content' => [$content],
-            'structuredContent' => $validatedvalues,
-        ];
-        if ($auditid = $this->record_audit_event(
-            'tool_call',
-            $this->functionname ?: null,
-            $this->current_request_is_mutating(),
-            'success'
-        )) {
-            $result['audit'] = ['id' => $auditid];
-        }
-
-        $payload = [
-            'jsonrpc' => $this->mcprequest->jsonrpc,
-            'id' => $this->mcprequest->id,
-            'result' => $result,
-        ];
-
-        $this->set_status(200);
-        $this->record_transport_event((string)$this->transportrequest['sessionid'], $payload);
-        $this->emit($this->safe_json_encode($payload));
+        $this->emit($this->safe_json_encode(['jsonrpc' => '2.0', 'id' => $id, 'error' => $error]));
     }
 
     /**
-     * Send a protocol-aware error response.
+     * Send a protocol-aware error response for authentication and unexpected failures.
      *
      * @param \Throwable|null $ex Optional exception.
      * @return void
@@ -660,7 +681,7 @@ class server extends legacy_server {
     protected function send_error($ex = null): void {
         $this->emit_json_headers();
         $status = $this->exception_status($ex);
-        if ($status === 401 && $this->oauth_service()->is_enabled()) {
+        if ($status === 401) {
             $this->send_header('WWW-Authenticate: ' . $this->oauth_service()->build_bearer_challenge(
                 'invalid_token',
                 'Authorization is required to access this MCP server.',
@@ -684,17 +705,29 @@ class server extends legacy_server {
      */
     protected function generate_error($ex): array {
         $error = parent::generate_error($ex);
+        if ($ex instanceof \Throwable && $this->exception_status($ex) >= 500 && !debugging('', DEBUG_DEVELOPER)) {
+            // Do not leak internals (paths, SQL) on unexpected failures.
+            $error['error']['message'] = 'Internal error';
+            unset($error['error']['data']);
+        }
+        $error['error']['code'] = match ($this->exception_status($ex)) {
+            401, 403 => -32001,
+            400 => protocol_exception::INVALID_PARAMS,
+            default => protocol_exception::INTERNAL_ERROR,
+        };
         $restriction = $this->restriction_details_for_exception($ex);
         if ($restriction !== null) {
             $error['error']['data']['restriction'] = $restriction;
         }
-        if ($auditid = $this->record_audit_event(
-            $this->audit_action_name(),
-            $this->functionname ?: null,
-            $this->current_request_is_mutating(),
-            'error',
-            $this->audit_detail_code($ex)
-        )) {
+        if (
+            $this->userid && ($auditid = $this->record_audit_event(
+                $this->audit_action_name(),
+                $this->functionname ?: null,
+                (bool)$this->currentmutating,
+                'error',
+                $this->audit_detail_code($ex)
+            ))
+        ) {
             $error['error']['data']['auditId'] = $auditid;
         }
 
@@ -720,22 +753,23 @@ class server extends legacy_server {
     }
 
     /**
-     * Create a new MCP transport session.
+     * Create a new legacy transport session.
      *
+     * @param array $clientcapabilities Client capabilities declared at initialize.
+     * @param bool $legacysse Whether the session belongs to the deprecated HTTP+SSE transport.
      * @return string
      */
-    protected function create_transport_session(): string {
-        $protocolversion = $this->negotiate_protocol_version();
-        $metadata = [
+    protected function create_transport_session(array $clientcapabilities = [], bool $legacysse = false): string {
+        $sessionid = $this->sessionstore->create_session([
             'userid' => (int)$this->userid,
             'contextid' => (int)$this->restricted_context->id,
             'serviceid' => (int)$this->restricted_serviceid,
             'serviceidentifier' => $this->transportidentity->restrictedservice ?? '',
-            'tokenhash' => $this->token_hash(),
-            'protocolversion' => $protocolversion,
-        ];
-
-        $sessionid = $this->sessionstore->create_session($metadata);
+            'principal' => $this->session_principal(),
+            'protocolversion' => $this->negotiate_protocol_version(),
+            'clientcapabilities' => $clientcapabilities,
+            'legacysse' => $legacysse,
+        ]);
         $this->transportsession = $this->sessionstore->get_session($sessionid);
 
         return $sessionid;
@@ -749,32 +783,18 @@ class server extends legacy_server {
      */
     protected function load_transport_session_or_respond(string $sessionid): bool {
         $session = $this->sessionstore->get_session($sessionid);
-        if ($session === null) {
+        $valid = $session !== null
+            && hash_equals((string)($session['principal'] ?? ''), $this->session_principal())
+            && (int)($session['userid'] ?? 0) === (int)$this->userid
+            && (int)($session['contextid'] ?? 0) === (int)$this->restricted_context->id
+            && (int)($session['serviceid'] ?? 0) === (int)$this->restricted_serviceid;
+
+        if (!$valid) {
             $this->send_transport_error(404, -32001, 'Unknown MCP session.', $this->mcprequest?->id ?? null);
             return false;
         }
 
-        if (($session['tokenhash'] ?? '') !== $this->token_hash()) {
-            $this->send_transport_error(404, -32001, 'Unknown MCP session.', $this->mcprequest?->id ?? null);
-            return false;
-        }
-
-        if ((int)($session['userid'] ?? 0) !== (int)$this->userid) {
-            $this->send_transport_error(404, -32001, 'Unknown MCP session.', $this->mcprequest?->id ?? null);
-            return false;
-        }
-
-        if ((int)($session['contextid'] ?? 0) !== (int)$this->restricted_context->id) {
-            $this->send_transport_error(404, -32001, 'Unknown MCP session.', $this->mcprequest?->id ?? null);
-            return false;
-        }
-
-        if ((int)($session['serviceid'] ?? 0) !== (int)$this->restricted_serviceid) {
-            $this->send_transport_error(404, -32001, 'Unknown MCP session.', $this->mcprequest?->id ?? null);
-            return false;
-        }
-
-        $requestversion = $this->transportrequest['protocolversion'] ?? null;
+        $requestversion = $this->transportrequest['protocolversionheader'] ?? null;
         if ($requestversion !== null && ($session['protocolversion'] ?? '') !== $requestversion) {
             $this->send_transport_error(
                 400,
@@ -794,75 +814,15 @@ class server extends legacy_server {
     }
 
     /**
-     * Handle non-tools control methods after session validation.
+     * Terminate a legacy transport session.
      *
      * @return void
      */
-    protected function handle_transport_method(): void {
-        if ($this->mcprequest === null) {
-            $this->send_transport_error(400, -32600, 'Invalid Request');
+    protected function handle_delete(): void {
+        if (!$this->prepare_stateful_request()) {
             return;
         }
-
-        if ($this->mcprequest->id === null && strpos($this->mcprequest->method, 'notifications/') === 0) {
-            $this->sessionstore->touch_session((string)$this->transportrequest['sessionid'], [
-                'lastnotification' => $this->mcprequest->method,
-            ]);
-            $this->set_status(202);
-            return;
-        }
-
-        switch ($this->mcprequest->method) {
-            case 'tools/list':
-                if (!$this->ensure_oauth_scope(false)) {
-                    return;
-                }
-                $this->send_tools_list_response();
-                return;
-
-            case 'resources/list':
-                if (!$this->ensure_oauth_scope(false)) {
-                    return;
-                }
-                $this->send_resources_list_response();
-                return;
-
-            case 'resources/read':
-                if (!$this->ensure_oauth_scope(false)) {
-                    return;
-                }
-                $this->send_resources_read_response();
-                return;
-
-            case 'prompts/list':
-                if (!$this->ensure_oauth_scope(false)) {
-                    return;
-                }
-                $this->send_prompts_list_response();
-                return;
-
-            case 'prompts/get':
-                if (!$this->ensure_oauth_scope(false)) {
-                    return;
-                }
-                $this->send_prompts_get_response();
-                return;
-
-            case 'initialize':
-                $this->send_transport_error(400, -32600, 'Initialize must start a new transport session.', $this->mcprequest->id);
-                return;
-
-            default:
-                $this->send_transport_error(200, -32601, 'Method not found', $this->mcprequest->id);
-        }
-    }
-
-    /**
-     * Terminate a transport session and any stored replay state.
-     *
-     * @return void
-     */
-    protected function handle_delete_request(): void {
+        $this->authenticate_request();
         if (!$this->load_transport_session_or_respond((string)$this->transportrequest['sessionid'])) {
             return;
         }
@@ -880,8 +840,6 @@ class server extends legacy_server {
      */
     protected function prepare_stateful_request(): bool {
         $this->emit_json_headers(false);
-        $this->token = $this->extract_token();
-        $this->publictoken = $this->token;
         $this->transportrequest = $this->protocolheaders->validate($this->httpmethod, $this->rawheaders, null);
 
         if ($this->transportrequest['ok']) {
@@ -933,12 +891,11 @@ class server extends legacy_server {
             $this->send_header('Content-Type: application/json; charset=utf-8');
         }
 
-        $this->send_header('Cache-Control: private, must-revalidate, max-age=0');
-        $this->send_header('Expires: ' . gmdate('D, d M Y H:i:s', 0) . ' GMT');
+        $this->send_header('Cache-Control: no-store');
         $this->send_header('Pragma: no-cache');
         $this->send_header('Access-Control-Allow-Methods: ' . static::ALLOW);
         $this->send_header('Access-Control-Allow-Headers: ' . static::ALLOW_HEADERS);
-        $this->send_header('Access-Control-Expose-Headers: MCP-Session-Id');
+        $this->send_header('Access-Control-Expose-Headers: MCP-Session-Id, WWW-Authenticate');
         $this->send_header('Vary: Origin');
 
         if ($this->responseorigin !== null) {
@@ -988,17 +945,11 @@ class server extends legacy_server {
     protected function send_transport_error(int $status, int $code, string $message, mixed $id = null): void {
         $this->emit_json_headers();
         $this->set_status($status);
-
-        $payload = [
-            'jsonrpc' => $this->mcprequest->jsonrpc ?? '2.0',
-            'error' => [
-                'code' => $code,
-                'message' => $message,
-            ],
+        $this->emit($this->safe_json_encode([
+            'jsonrpc' => '2.0',
+            'error' => ['code' => $code, 'message' => $message],
             'id' => $id,
-        ];
-
-        $this->emit($this->safe_json_encode($payload));
+        ]));
     }
 
     /**
@@ -1012,16 +963,22 @@ class server extends legacy_server {
             return 400;
         }
 
-        if ($exception instanceof restricted_context_exception) {
+        if (
+            $exception instanceof restricted_context_exception
+                || $exception instanceof \required_capability_exception
+                || $exception instanceof \webservice_access_exception
+        ) {
             return 403;
         }
 
-        if ($exception instanceof \required_capability_exception || $exception instanceof \webservice_access_exception) {
-            return 403;
-        }
-
-        if ($exception instanceof moodle_exception && ($exception->errorcode ?? '') === 'invalidtoken') {
-            return 401;
+        if ($exception instanceof moodle_exception) {
+            return match ($exception->errorcode ?? '') {
+                'invalidtoken' => 401,
+                'wsaccessuserdeleted', 'wsaccessusersuspended', 'wsaccessuserunconfirmed', 'wsaccessusernologin',
+                'wsaccessuserexpired', 'servicenotavailable', 'sitepolicynotagreed' => 403,
+                'sitemaintenance' => 503,
+                default => 500,
+            };
         }
 
         return 500;
@@ -1056,109 +1013,29 @@ class server extends legacy_server {
         }
 
         if ($exception instanceof \required_capability_exception) {
-            return [
-                'category' => 'capability',
-                'code' => 'missing_capability',
-                'retryable' => false,
-            ];
+            return ['category' => 'capability', 'code' => 'missing_capability', 'retryable' => false];
         }
 
         if ($exception instanceof restricted_context_exception) {
-            return [
-                'category' => 'context',
-                'code' => 'restricted_context',
-                'retryable' => true,
-            ];
+            return ['category' => 'context', 'code' => 'restricted_context', 'retryable' => true];
         }
 
         if ($exception instanceof \webservice_access_exception) {
-            return [
-                'category' => 'service',
-                'code' => 'webservice_access_denied',
-                'retryable' => false,
-            ];
+            return ['category' => 'service', 'code' => 'webservice_access_denied', 'retryable' => false];
         }
 
         if ($exception instanceof moodle_exception) {
             return match ($exception->errorcode ?? '') {
-                'servicerequireslogin', 'requireloginerror', 'requirelogin' => [
-                    'category' => 'authentication',
-                    'code' => 'login_required',
-                    'retryable' => true,
-                ],
-                'notingroup' => [
-                    'category' => 'group',
-                    'code' => 'group_membership_required',
-                    'retryable' => false,
-                ],
-                'nopermissions' => [
-                    'category' => 'capability',
-                    'code' => 'permission_denied',
-                    'retryable' => false,
-                ],
-                'invalidtoken' => [
-                    'category' => 'authentication',
-                    'code' => 'invalid_token',
-                    'retryable' => true,
-                ],
+                'servicerequireslogin', 'requireloginerror', 'requirelogin' =>
+                    ['category' => 'authentication', 'code' => 'login_required', 'retryable' => true],
+                'notingroup' => ['category' => 'group', 'code' => 'group_membership_required', 'retryable' => false],
+                'nopermissions' => ['category' => 'capability', 'code' => 'permission_denied', 'retryable' => false],
+                'invalidtoken' => ['category' => 'authentication', 'code' => 'invalid_token', 'retryable' => true],
                 default => null,
             };
         }
 
         return null;
-    }
-
-    /**
-     * Determine whether the current tool call targets a wrapper tool.
-     *
-     * @return bool
-     */
-    protected function should_execute_wrapper(): bool {
-        if ($this->transportidentity === null || empty($this->functionname)) {
-            return false;
-        }
-
-        return (new wrapper_manager())->find($this->functionname) !== null;
-    }
-
-    /**
-     * Execute a wrapper tool and emit a tools/call compatible response.
-     *
-     * @return void
-     */
-    protected function execute_wrapper_tool(): void {
-        $wrappers = new wrapper_manager();
-        if (!$this->ensure_oauth_scope($wrappers->is_mutating($this->functionname))) {
-            return;
-        }
-
-        $result = $wrappers->execute(
-            $this->functionname,
-            is_array($this->parameters) ? $this->parameters : [],
-            $this->restricted_context,
-            $this->transportidentity->user ?? ($GLOBALS['USER'] ?? null)
-        );
-
-        $validatedvalues = ['result' => $result];
-        $content = [
-            'type' => 'text',
-            'text' => json_encode($validatedvalues, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-        ];
-        $payload = [
-            'jsonrpc' => $this->mcprequest->jsonrpc,
-            'id' => $this->mcprequest->id,
-            'result' => [
-                'content' => [$content],
-                'structuredContent' => $validatedvalues,
-            ],
-        ];
-        if ($auditid = $this->record_audit_event('tool_call', $this->functionname, true, 'success')) {
-            $payload['result']['audit'] = ['id' => $auditid];
-        }
-
-        $this->set_status(200);
-        $this->record_transport_event((string)$this->transportrequest['sessionid'], $payload);
-        $this->emit($this->safe_json_encode($payload));
     }
 
     /**
@@ -1179,20 +1056,19 @@ class server extends legacy_server {
         ?string $detailcode = null
     ): ?string {
         $userid = isset($this->transportidentity->user->id) ? (int)$this->transportidentity->user->id : ($this->userid ?? null);
+        if (empty($userid)) {
+            // Never audit unauthenticated traffic: it lets anyone grow the table.
+            return null;
+        }
         $credentialid = isset($this->transportidentity->credential->id)
             ? (int)$this->transportidentity->credential->id
             : null;
-        $contextid = isset($this->restricted_context->id)
-            ? (int)$this->restricted_context->id
-            : (isset($this->transportidentity->restrictedcontext->id)
-                ? (int)$this->transportidentity->restrictedcontext->id
-                : null);
 
         try {
             return $this->auditlogger->record([
                 'userid' => $userid,
                 'credentialid' => $credentialid,
-                'contextid' => $contextid,
+                'contextid' => isset($this->restricted_context->id) ? (int)$this->restricted_context->id : null,
                 'serviceid' => $this->restricted_serviceid ?? null,
                 'sessionid' => $this->transportrequest['sessionid'] ?? null,
                 'requestid' => $this->request_id_string(),
@@ -1206,6 +1082,7 @@ class server extends legacy_server {
             if (defined('PHPUNIT_TEST') && PHPUNIT_TEST) {
                 throw $exception;
             }
+            debugging('MCP audit write failed: ' . $exception->getMessage(), DEBUG_DEVELOPER);
             return null;
         }
     }
@@ -1216,33 +1093,21 @@ class server extends legacy_server {
      * @return string
      */
     protected function audit_action_name(): string {
-        if (($this->mcprequest instanceof request) && $this->mcprequest->method === 'tools/list') {
-            return 'discover';
-        }
-
-        if (!empty($this->functionname)) {
-            return 'tool_call';
-        }
-
-        return 'request';
+        $method = $this->mcprequest instanceof request ? $this->mcprequest->method : '';
+        return match ($method) {
+            'tools/list' => 'discover',
+            'tools/call' => 'tool_call',
+            default => 'request',
+        };
     }
 
     /**
-     * Determine whether the current request mutates Moodle state.
+     * Whether the current tools/call target mutates state (as resolved during execution).
      *
      * @return bool
      */
     protected function current_request_is_mutating(): bool {
-        if (!empty($this->functionname) && $this->transportidentity !== null &&
-                (new wrapper_manager())->find($this->functionname) !== null) {
-            return (new wrapper_manager())->is_mutating($this->functionname);
-        }
-
-        if (isset($this->function->type)) {
-            return (string)$this->function->type !== 'read';
-        }
-
-        return false;
+        return (bool)$this->currentmutating;
     }
 
     /**
@@ -1252,28 +1117,12 @@ class server extends legacy_server {
      */
     protected function handle_head_request(): void {
         $this->emit_json_headers(false);
-        $this->token = $this->extract_token();
-        $this->publictoken = $this->token;
-
-        if (empty($this->publictoken)) {
-            if ($this->oauth_service()->is_enabled()) {
-                $this->send_header('WWW-Authenticate: ' . $this->oauth_service()->build_bearer_challenge(
-                    'invalid_token',
-                    'Authorization is required to access this MCP server.',
-                    $this->oauth_default_scope()
-                ));
-            }
-            $this->set_status(401);
-            return;
-        }
-
         try {
-            $this->authenticate_user();
-            $this->release_transport_session();
+            $this->authenticate_request();
             $this->set_status(204);
         } catch (\Throwable $exception) {
             $status = $this->exception_status($exception);
-            if ($status === 401 && $this->oauth_service()->is_enabled()) {
+            if ($status === 401) {
                 $this->send_header('WWW-Authenticate: ' . $this->oauth_service()->build_bearer_challenge(
                     'invalid_token',
                     'Authorization is required to access this MCP server.',
@@ -1290,15 +1139,10 @@ class server extends legacy_server {
      * @return string|null
      */
     protected function request_id_string(): ?string {
-        if (!($this->mcprequest instanceof request) || !isset($this->mcprequest->id) || $this->mcprequest->id === null) {
+        if (!($this->mcprequest instanceof request) || $this->mcprequest->id === null) {
             return null;
         }
-
-        if (is_scalar($this->mcprequest->id)) {
-            return (string)$this->mcprequest->id;
-        }
-
-        return json_encode($this->mcprequest->id);
+        return (string)$this->mcprequest->id;
     }
 
     /**
@@ -1325,25 +1169,24 @@ class server extends legacy_server {
     }
 
     /**
-     * Persist a response for optional SSE replay.
+     * Keep responses for replay only on deprecated HTTP+SSE sessions, which are the only reader.
      *
-     * @param string $sessionid Session id.
      * @param array $payload Response payload.
      * @return void
      */
-    protected function record_transport_event(string $sessionid, array $payload): void {
-        if ($sessionid === '') {
+    protected function record_transport_event(array $payload): void {
+        if (empty($this->transportsession['legacysse']) || empty($this->transportrequest['sessionid'])) {
             return;
         }
 
-        $this->replaystore->append_event($sessionid, [
+        $this->replaystore->append_event((string)$this->transportrequest['sessionid'], [
             'type' => 'message',
             'payload' => $payload,
         ]);
     }
 
     /**
-     * Negotiate the protocol version for the current initialize request.
+     * Negotiate the legacy protocol version for the current initialize request.
      *
      * @return string
      */
@@ -1357,16 +1200,21 @@ class server extends legacy_server {
             return $requested;
         }
 
-        return protocol_headers::DEFAULT_PROTOCOL_VERSION;
+        // Unknown versions get our newest legacy revision; the client decides whether it can continue.
+        return dispatcher::LEGACY_VERSIONS[0];
     }
 
     /**
-     * Stable token hash used to bind transport sessions to auth state.
+     * Stable principal sessions bind to: the credential (survives token refresh) or the raw token.
      *
      * @return string
      */
-    protected function token_hash(): string {
-        return hash('sha256', (string)($this->publictoken ?? $this->token ?? ''));
+    protected function session_principal(): string {
+        if (!empty($this->transportidentity->familyid)) {
+            // The family survives OAuth refresh-token rotation, so sessions do too.
+            return hash('sha256', 'family:' . $this->transportidentity->familyid);
+        }
+        return hash('sha256', 'token:' . (string)($this->publictoken ?? $this->token ?? ''));
     }
 
     /**
@@ -1403,78 +1251,25 @@ class server extends legacy_server {
     }
 
     /**
-     * Ensure the current request has the required OAuth scope.
+     * Throw when the token lacks the read or write scope.
      *
-     * @param bool $write Whether the request needs write scope.
-     * @return bool
-     */
-    protected function ensure_oauth_scope(bool $write): bool {
-        if (!$this->oauth_scope_enforced()) {
-            return true;
-        }
-
-        $requiredscope = $write ? oauth_service::SCOPE_WRITE : oauth_service::SCOPE_READ;
-        $grantedscope = (string)($this->transportidentity->scope ?? '');
-
-        if (oauth_service::scope_contains($grantedscope, $requiredscope)) {
-            return true;
-        }
-
-        $this->send_oauth_scope_error($requiredscope);
-        return false;
-    }
-
-    /**
-     * Ensure the current harvested external function has the correct scope.
-     *
-     * @return bool
-     */
-    protected function ensure_external_function_scope(): bool {
-        if (!$this->oauth_scope_enforced()) {
-            return true;
-        }
-
-        $requireswrite = isset($this->function->type) && (string)$this->function->type !== 'read';
-        return $this->ensure_oauth_scope($requireswrite);
-    }
-
-    /**
-     * Send a 403 insufficient-scope response.
-     *
-     * @param string $requiredscope Required OAuth scope.
+     * @param bool $write Whether write scope is needed.
      * @return void
+     * @throws protocol_exception
      */
-    protected function send_oauth_scope_error(string $requiredscope): void {
-        $this->emit_json_headers();
-        $this->send_header('WWW-Authenticate: ' . $this->oauth_service()->build_bearer_challenge(
-            'insufficient_scope',
-            'The presented access token does not grant the required scope.',
-            $requiredscope
-        ));
-        $this->set_status(403);
-
-        $payload = [
-            'jsonrpc' => $this->mcprequest->jsonrpc ?? '2.0',
-            'error' => [
-                'code' => -32003,
-                'message' => 'Insufficient OAuth scope.',
-                'data' => [
-                    'requiredScope' => $requiredscope,
-                ],
-            ],
-            'id' => $this->mcprequest->id ?? null,
-        ];
-
-        if ($auditid = $this->record_audit_event(
-            $this->audit_action_name(),
-            $this->functionname ?: null,
-            $requiredscope === oauth_service::SCOPE_WRITE,
-            'error',
-            'insufficient_scope'
-        )) {
-            $payload['error']['data']['auditId'] = $auditid;
+    protected function scope_check(bool $write): void {
+        if (!$this->oauth_scope_enforced()) {
+            return;
         }
 
-        $this->emit($this->safe_json_encode($payload));
+        $required = $write ? oauth_service::SCOPE_WRITE : oauth_service::SCOPE_READ;
+        if (!oauth_service::scope_contains((string)($this->transportidentity->scope ?? ''), $required)) {
+            throw new protocol_exception(
+                self::INSUFFICIENT_SCOPE,
+                'Insufficient OAuth scope.',
+                403,
+                ['requiredScope' => $required]
+            );
+        }
     }
 }

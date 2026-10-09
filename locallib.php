@@ -17,6 +17,7 @@
 defined('MOODLE_INTERNAL') || die();
 
 require_once("$CFG->dirroot/webservice/lib.php");
+require_once("$CFG->dirroot/webservice/mcp/lib.php");
 
 /**
  * MCP test client for automated testing.
@@ -43,34 +44,12 @@ class webservice_mcp_test_client implements webservice_test_client_interface {
      * @return mixed The decoded response from the server.
      */
     public function simpletest($serverurl, $function, $params) {
-        $request = [
-            'jsonrpc' => '2.0',
-            'method' => 'tools/call',
-            'params' => [
-                'name' => $function,
-                'arguments' => $params,
-            ],
-            'id' => 1,
-        ];
+        // The admin test page passes the token as ?wstoken=; MCP accepts it only as a Bearer header.
+        $query = [];
+        parse_str((string)parse_url($serverurl, PHP_URL_QUERY), $query);
+        $url = strtok($serverurl, '?');
 
-        $curl = curl_init();
-        curl_setopt_array($curl, [
-            CURLOPT_URL => $serverurl,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_ENCODING => '',
-            CURLOPT_TIMEOUT => 0,
-            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-            CURLOPT_CUSTOMREQUEST => 'POST',
-            CURLOPT_POSTFIELDS => json_encode($request),
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-            ],
-        ]);
-
-        $response = curl_exec($curl);
-
-        curl_close($curl);
-
-        return json_decode($response, true);
+        $client = new webservice_mcp_client($url, (string)($query['wstoken'] ?? ''));
+        return $client->call_tool($function, $params);
     }
 }

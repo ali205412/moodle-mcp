@@ -195,6 +195,66 @@ https://your-moodle-site.example/webservice/mcp/.well-known/oauth-authorization-
 https://your-moodle-site.example/webservice/mcp/.well-known/openid-configuration
 ```
 
+The OAuth issuer is `https://your-moodle-site.example/webservice/mcp`. MCP clients look for its metadata at,
+in order, `/.well-known/oauth-authorization-server/webservice/mcp`,
+`/.well-known/openid-configuration/webservice/mcp`, and
+`/webservice/mcp/.well-known/openid-configuration`. Only the last one is served by the plugin without web
+server changes; it is a minimal OpenID document (this server issues no ID tokens, `jwks_uri` is an empty key
+set). For clients that only probe the root-level RFC 8414 / RFC 9728 locations, add rewrites, for example
+in nginx:
+
+```nginx
+location = /.well-known/oauth-authorization-server/webservice/mcp {
+    rewrite ^ /webservice/mcp/.well-known/oauth-authorization-server/index.php last;
+}
+location = /.well-known/openid-configuration/webservice/mcp {
+    rewrite ^ /webservice/mcp/.well-known/openid-configuration/index.php last;
+}
+location = /.well-known/oauth-protected-resource/webservice/mcp/server.php {
+    rewrite ^ /webservice/mcp/.well-known/oauth-protected-resource/index.php last;
+}
+```
+
+### OAuth token revocation (RFC 7009)
+
+```text
+https://your-moodle-site.example/webservice/mcp/oauth/revoke.php
+```
+
+### Bulk access for users (admin keys and OAuth pre-approval)
+
+Users with `webservice/mcp:issueforothers` (site admins implicitly) can provision access in bulk at
+`/webservice/mcp/admin/keys.php` (Site administration > Server > Web services > Model Context Protocol >
+MCP access for users) or from the CLI:
+
+```bash
+# Issue read/write keys valid 90 days to a cohort; tokens are written once to a 0600 CSV.
+php webservice/mcp/cli/keys.php --issue --cohort=12 --label="Spring pilot" --scope=write \
+    --expires-days=90 --output=/root/mcp-keys.csv
+php webservice/mcp/cli/keys.php --list --label="Spring pilot"
+php webservice/mcp/cli/keys.php --revoke --label="Spring pilot"
+# Let users connect claude.ai / Claude Desktop without the consent screen.
+php webservice/mcp/cli/keys.php --preapprove --all-mcp-users --scope=write
+php webservice/mcp/cli/keys.php --unpreapprove --usernames=alice,bob
+```
+
+Selectors: `--userids`, `--usernames`, `--emails`, `--idnumbers`, `--file=users.csv`, `--cohort`, `--course` (+ `--role`), `--all-mcp-users`. The page also accepts an uploaded CSV and users chosen in Site administration > Users > Bulk user actions ("Generate MCP keys or pre-approve MCP access").
+The CSV holds `claude mcp add` commands and `.mcp.json` snippets per user. Keys are stored hashed and shown
+only once. Users see and can revoke admin-issued keys on their Connected apps page.
+
+### Enterprise Managed Authorization (preview)
+
+With `emaenabled` on, the token endpoint accepts `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`
+identity assertions signed by an issuer listed in `ematrustedissuers` (keys from the issuer's OpenID
+configuration). Only metadata-document or pre-registered clients may use it; users are matched by
+`emausermatchfield` with the auth_oidc token table as a fallback.
+
+### Connected apps
+
+Users can see and revoke the applications connected to their account at
+`/webservice/mcp/connections.php`; users with `webservice/mcp:manageconnectors` can review every user's
+connections at `/webservice/mcp/connections.php?all=1`.
+
 ### Browser bootstrap
 
 ```text
@@ -237,10 +297,9 @@ https://your-moodle-site.example/webservice/mcp/server.php
 
 ### Manual bootstrap
 
-```bash
-curl "https://your-moodle-site.example/webservice/mcp/launch.php?format=json" \
-  -H "Accept: application/json"
-```
+Open `https://your-moodle-site.example/webservice/mcp/launch.php?format=json` in a signed-in browser and
+confirm. Issuing a credential requires a POST with the session key, so it cannot be triggered by a link or
+from another site.
 
 ### List tools
 
@@ -429,3 +488,91 @@ webservice/mcp/
 - the wrapper framework exists so UI-only gaps can be added without abandoning the plugin-first model
 - current wrapper implementation is intentionally concentrated on course authoring, where the upstream external surface is weakest for MCP-style operator workflows
 - if you change supported Moodle behavior, verify it against the relevant Moodle source branch, not memory
+
+## Files
+
+Connector clients get file, export, backup and restore tools (`file_*`, `export_*`, `backup_*`, `restore_*`). Every
+call runs as the signed-in user, inside the token's context restriction, and is checked by Moodle itself:
+listing and inline reads go through `file_browser`, downloads through `file_pluginfile()`, writes through the
+user's draft area and `file_browser` write checks, backups and restores through the backup controllers.
+
+| Tool | Purpose |
+| --- | --- |
+| `file_list` | Browse contexts, areas and folders (`courseid` + `recursive` lists course and activity files); includes upload limits and quota for your own areas. |
+| `file_read` | Read by `moodle://file/...` URI or any on-site file URL. Text inline (paged), images/audio as content blocks, other files as base64 up to the inline limit, otherwise a download link. Areas `file_browser` does not cover are read in-process when the activity lists the file for the user (as `core_course_get_contents` does); anything else gets a download link (no HTTP self-requests). Optional `convert_to` pdf/txt via document converters. |
+| `file_get_download_url` | Signed, short-lived link for any file the user can download (any size, Range/resume). |
+| `file_create_upload_url` | Signed upload link into the user's draft area (any size). |
+| `file_upload` / `file_upload_from_url` | Small inline uploads / server-side fetch of a public URL (with Moodle's cURL security rules). |
+| `file_save_draft` | Merge or replace a draft area into a writable file area (private files obey the user quota). |
+| `file_delete` | Delete a file or empty folder the user may manage. |
+| `file_set_course_image` | Set the course overview image from a draft. |
+| `export_course_content` / `export_assignment_submissions` | Links that stream "Download course content" / "Download all submissions" zips. |
+| `backup_create` / `backup_status` / `restore_from_draft` | Asynchronous backups and restores (adhoc tasks; cron must run). |
+
+Uploaded files land in the draft area and return a `draftitemid`; pass it to any Moodle function that accepts
+draft files (assignment submissions, forum attachments, `core_user_add_user_private_files`, `wrapper_course_add_module`, ...).
+
+### Download endpoint: `/webservice/mcp/pluginfile.php?ticket=...`
+
+- `GET`/`HEAD`; `OPTIONS` for CORS preflight (origins from the *Allowed transport origins* setting).
+- Single files are served by `file_pluginfile()` (or `send_stored_file()` for the user's own drafts) with ETag/304,
+  `Range` byte serving and X-Sendfile when configured. Exports stream a zip with `X-Accel-Buffering: no`.
+- Every download carries `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`; draft files are
+  always sent as attachments, as core `draftfile.php` does.
+- Links are only issued to connector connections. The ticket binds user, connector credential family, external
+  service and context restriction; it is rejected (401/403) once it expires, the credential family is
+  revoked/expired, the user is suspended/deleted, the service disables
+  `downloadfiles`, or the user loses `webservice/mcp:use`.
+- Errors are JSON `{"error": "...", "errorcode": "..."}` with status 400, 401, 403, 404, 413, 429 or 503.
+
+### Upload endpoint: `/webservice/mcp/upload.php?ticket=...`
+
+- `PUT` (or `POST`) raw body: `curl -T ./file.pdf "<url>&filename=file.pdf"`. The body is streamed to disk in 1 MB
+  chunks and refused with 413 above the user's limit. The name comes from the ticket, `filename=` or `Content-Disposition`.
+- `POST multipart/form-data` with one or many files: `curl -F "file=@./a.pdf" -F "file2=@./b.png" "<url>"`
+  (subject to PHP `upload_max_filesize`/`post_max_size`; prefer `PUT` for big files).
+- Resumable: send chunks with `Content-Range: bytes start-end/total` in order. Partial data is kept under
+  `$CFG->tempdir/webservice_mcp_uploads` (removed after completion or a day of inactivity); a chunk that does not
+  start at the received size gets 416 with the expected offset. If the link expires mid-upload, get a new one for the
+  same `draftitemid`, folder and file name and continue from the received offset.
+- Same-named files are renamed (`name (1).ext`) unless the ticket or `&overwrite=1` asks to overwrite.
+- Antivirus scanning, draft upload rate limits and the `draft_file_added` event apply as for core uploads.
+- Response: `201 {"complete": true, "draftitemid": N, "files": [{"filename", "filepath", "size", "mimetype", "contenthash", "uri"}]}`
+  (`202 {"complete": false, "received": N}` for intermediate chunks).
+- Upload limit: the site `maxbytes` and course limit as in core (smaller wins); when both are 0, the plugin's
+  `uploadmaxbytes` (default 2 GB).
+  PHP's `upload_max_filesize`/`post_max_size` don't apply: uploads are streamed bodies, not multipart forms. The web
+  server must accept large bodies (nginx `client_max_body_size`).
+- Unfinished chunked uploads are capped per user: `uploadmaxpartials` open uploads (default 5, else 429) holding at most
+  `uploadmaxpartialbytes` declared bytes (default twice the upload limit, else 413). A declared total above the upload
+  limit is refused with 413 before any data is read.
+
+### Settings (Site administration > Plugins > Web services > Model Context Protocol > Files)
+
+`downloadticketttl` (900 s), `uploadticketttl` (3600 s), `inlinetextmaxbytes` (256 KB), `inlinebinarymaxbytes` (5 MB),
+`uploadinlinemaxbytes` (15 MB), `uploadfromurlmaxbytes` (100 MB), `uploadmaxbytes` (2 GB),
+`uploadmaxpartials` (5), `uploadmaxpartialbytes` (0 = twice the upload limit). Ticket lifetimes are capped at one day; clients can
+request shorter links but not longer ones. The connector's external service must have *Can download files* (for
+`file_read`, file resources, links and exports) and *Can upload files* enabled for those tools to appear and work.
+
+### Recommended nginx X-Accel-Redirect setup
+
+PHP-FPM workers are scarce, so let nginx send file bodies. In `config.php`:
+
+```php
+$CFG->xsendfile = 'X-Accel-Redirect';
+$CFG->xsendfilealiases = ['/dataroot/' => $CFG->dataroot];
+```
+
+and in the nginx server block:
+
+```nginx
+location /dataroot/ {
+    internal;
+    alias /path/to/moodledata/;   # must match $CFG->dataroot, with a trailing slash
+}
+```
+
+Uploads are buffered to disk by nginx before PHP runs, so slow clients do not hold workers; keep
+`client_max_body_size` at least as large as the biggest upload you allow. Exports (course content and
+assignment zips) are generated on the fly and do hold a worker for the duration of the download.
