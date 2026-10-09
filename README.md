@@ -567,11 +567,17 @@ $CFG->xsendfilealiases = ['/dataroot/' => $CFG->dataroot];
 and in the nginx server block:
 
 ```nginx
-location /dataroot/ {
+location ^~ /dataroot/ {
     internal;
     alias /path/to/moodledata/;   # must match $CFG->dataroot, with a trailing slash
+    # nginx keeps only a few upstream headers on X-Accel-Redirect (Content-Type, Content-Disposition,
+    # Cache-Control, ...), so the plugin's nosniff header is lost unless nginx adds it here.
+    add_header X-Content-Type-Options nosniff always;
 }
 ```
+
+Enable nginx first, then `config.php`: Moodle sending `X-Accel-Redirect` before nginx knows the internal location
+breaks every file download. `^~` keeps regex locations (e.g. the `.php` handler) from matching file paths.
 
 Uploads are buffered to disk by nginx before PHP runs, so slow clients do not hold workers; keep
 `client_max_body_size` at least as large as the biggest upload you allow. Exports (course content and

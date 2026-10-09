@@ -91,3 +91,19 @@ harmlessly; drop them if wanted.
   and `/.well-known/oauth-authorization-server/webservice/mcp` (today 404; clients use the 401 challenge first).
 - **File permissions:** Moodle code is world-writable (`config.php` 777, plugin dir 777/666). Step 3 fixes the
   plugin dir only; tightening the rest of the Moodle tree is the site owner's call.
+
+## Deploy record (2026-10-09)
+
+- Release commit `51ea802` (branch `release/0.9.0`), tarball sha256 `ac8628acb8e0...`. Backup: `/var/backups/webservice_mcp-20261009-1642` (root-only;
+  plugin tables row counts verified against live; `my.cnf` there holds the DB credentials, mode 600).
+- Maintenance 16:42:49-16:43:55 (66 s). The first upgrade run stopped at Moodle's environment check: CLI
+  `max_input_vars` was 1000 (FPM had 5000). Re-run with `php -d max_input_vars=5000` succeeded; CLI php.ini now 5000.
+- Post-upgrade: version 2026101006, tokens hashed (flag set), service 11 detached (component NULL, 805 functions),
+  unrevoked credentials 844 before and after (5 unexpired; the rest are expired hourly access tokens), allowlist
+  includes mofeed.info, signing secret set.
+- Smoke (official SDK v1 + v2 through nginx): all checks pass, incl. 50 MB upload/download sha256 match.
+- Extras applied: nginx root discovery rewrites + internal `/dataroot/` (X-Accel, with `add_header nosniff`),
+  `$CFG->xsendfile` in config.php, Moodle tree chown nginx + `u=rwX,go=rX` (was 9,591 world-writable entries;
+  snapshot in `/var/backups/webservice_mcp-20261009-1642/moodle-perms.txt`), config.php 640, plugin `uploadmaxbytes` = 16 GiB (FPM limit is 16G; the
+  "2 MB" seen earlier was the CLI php.ini only). Config backups: `moodle.conf.bak`, `config.php.bak`, `php-cli.ini.bak`.
+- Open, not changed: Moodle cron runs as **root** (root crontab), 16 overlapping cron processes at the time.
