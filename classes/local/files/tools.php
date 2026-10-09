@@ -74,8 +74,7 @@ class tools {
                     'readOnlyHint' => !self::is_mutating($name),
                     'destructiveHint' => in_array($name, ['file_delete', 'file_save_draft', 'restore_from_draft'], true),
                     'idempotentHint' => !in_array($name, ['file_upload', 'file_upload_from_url', 'backup_create',
-                        'restore_from_draft', 'file_create_upload_url', 'export_course_content',
-                        'export_assignment_submissions'], true),
+                        'restore_from_draft', 'file_create_upload_url'], true),
                     'openWorldHint' => $name === 'file_upload_from_url',
                 ],
             ];
@@ -128,7 +127,7 @@ class tools {
 
         $definitions = self::definitions();
         if (!isset($definitions[$name])) {
-            throw new moodle_exception('invalidparameter', 'debug', '', null, 'Unknown tool: ' . $name);
+            throw new transfer_exception(400, 'invalidparameter', 'Unknown tool: ' . $name);
         }
         $args = self::validate($definitions[$name], $args);
         file_service::apply_restriction($ctx);
@@ -292,7 +291,7 @@ class tools {
      * @return moodle_exception
      */
     private static function invalid(string $message): moodle_exception {
-        return new moodle_exception('invalidparameter', 'debug', '', null, $message);
+        return new transfer_exception(400, 'invalidparameter', $message);
     }
 
     /**

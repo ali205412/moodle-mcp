@@ -75,6 +75,7 @@ class cleanup extends \core\task\scheduled_task {
         $DB->delete_records_select('webservice_mcp_preapproval', 'expiry > 0 AND expiry < :now', ['now' => $now]);
         $DB->delete_records_select('webservice_mcp_jti', 'expiresat < :cutoff', ['cutoff' => $now - HOURSECS]);
         $DB->delete_records_select('webservice_mcp_ratelimit', 'timecreated < :cutoff', ['cutoff' => $now - 2 * HOURSECS]);
+        $DB->delete_records_select('webservice_mcp_link', 'expiresat < :now', ['now' => $now]);
 
         // Asynchronous file exports (zips and their state) older than 24 hours.
         \webservice_mcp\local\files\export_service::purge($now);

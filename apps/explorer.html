@@ -83,6 +83,10 @@
       return;
     }
     if (msg.method === 'ui/notifications/tool-result') { render(msg.params); }
+    if (msg.method === 'ui/notifications/tool-cancelled') {
+      $('main').replaceChildren(el('p', { class: 'muted' }, 'The Moodle call was cancelled' +
+        (msg.params && msg.params.reason ? `: ${msg.params.reason}` : '.') + ' Ask again to load your courses.'));
+    }
     if (msg.method === 'ui/notifications/host-context-changed') { applyTheme(msg.params); }
     if (msg.method === 'ui/resource-teardown' && msg.id !== undefined) { send({ jsonrpc: '2.0', id: msg.id, result: {} }); }
     if (msg.method === 'ping' && msg.id !== undefined) { send({ jsonrpc: '2.0', id: msg.id, result: {} }); }
@@ -146,7 +150,7 @@
     const parts = [];
     if ((data.deadlines || []).length) {
       parts.push(el('section', {}, el('h2', {}, 'Upcoming'), el('ul', {}, ...data.deadlines.map((d) => el('li', { class: 'deadline' },
-        el('span', {}, d.name), el('span', { class: 'muted' }, new Date(d.timesort * 1000).toLocaleString())))));
+        el('span', {}, d.name), el('span', { class: 'muted' }, new Date(d.timesort * 1000).toLocaleString()))))));
     }
     for (const section of data.sections || []) {
       const modules = (section.modules || []).filter((m) => m.uservisible !== false);

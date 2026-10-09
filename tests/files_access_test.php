@@ -194,14 +194,15 @@ final class files_access_test extends advanced_testcase {
     }
 
     /**
-     * Text over cap is paged with download hint.
+     * Text over the cap is paged; the content itself comes back, not a link.
      */
-    public function test_text_over_cap_is_paged_with_download_hint(): void {
+    public function test_text_over_cap_is_paged(): void {
         set_config('inlinetextmaxbytes', 5, 'webservice_mcp');
         $read = $this->call($this->student, 'file_read', ['uri' => $this->notes_uri()]);
         $this->assertSame('hello', $read['content'][1]['text']);
         $this->assertStringContainsString('offset=5', $read['content'][2]['text']);
-        $this->assertStringContainsString('/webservice/mcp/pluginfile.php?ticket=', $read['content'][2]['text']);
+        $next = $this->call($this->student, 'file_read', ['uri' => $this->notes_uri(), 'offset' => 5]);
+        $this->assertSame(' worl', $next['content'][1]['text']);
     }
 
     /**
@@ -241,7 +242,7 @@ final class files_access_test extends advanced_testcase {
         $uri = locator::uri(context_course::instance($this->course->id)->id, 'question', 'questiontext', 1, '/', 'q.png');
         $read = $this->call($this->student, 'file_read', ['uri' => $uri]);
         $this->assertStringContainsString('size unknown', $read['content'][0]['text']);
-        $this->assertStringContainsString('/webservice/mcp/pluginfile.php?ticket=', $read['content'][0]['text']);
+        $this->assertStringContainsString('/webservice/mcp/pluginfile.php?t=', $read['content'][0]['text']);
     }
 
     /**

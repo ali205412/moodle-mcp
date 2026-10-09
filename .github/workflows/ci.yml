@@ -58,6 +58,9 @@ jobs:
         with:
           path: plugin
 
+      - name: Install PDF tools (render and pdftotext tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ghostscript poppler-utils
+
       - name: Setup PHP ${{ env.PHP_VERSION }}
         uses: shivammathur/setup-php@v2
         with:
@@ -118,6 +121,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: plugin
+
+      - name: Install PDF tools (render and pdftotext tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ghostscript poppler-utils
 
       - name: Setup PHP ${{ env.PHP_VERSION }}
         uses: shivammathur/setup-php@v2

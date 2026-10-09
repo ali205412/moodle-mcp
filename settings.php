@@ -260,6 +260,7 @@ if ($hassiteconfig && $settings instanceof admin_settingpage && $ADMIN->fulltree
         'uploadmaxbytes' => 2147483648,
         'uploadmaxpartials' => 5,
         'uploadmaxpartialbytes' => 0,
+        'renderimagemaxbytes' => 4194304,
     ];
     foreach ($filesintsettings as $name => $default) {
         $settings->add(new admin_setting_configtext(
@@ -270,6 +271,13 @@ if ($hassiteconfig && $settings instanceof admin_settingpage && $ADMIN->fulltree
             PARAM_INT
         ));
     }
+
+    $settings->add(new admin_setting_configexecutable(
+        'webservice_mcp/pathtopdftotext',
+        get_string('settings:pathtopdftotext', 'webservice_mcp'),
+        get_string('settings:pathtopdftotext_desc', 'webservice_mcp'),
+        ''
+    ));
 }
 
 if ($hassiteconfig) {

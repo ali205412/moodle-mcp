@@ -104,20 +104,15 @@ class locator {
      */
     public static function parse_uri(string $uri): array {
         if (strpos($uri, self::PREFIX) !== 0) {
-            throw new moodle_exception('invalidparameter', 'debug', '', null, 'Expected a moodle://file/ URI.');
+            throw new transfer_exception(400, 'invalidparameter', 'Expected a moodle://file/ URI.');
         }
         $rest = substr($uri, strlen(self::PREFIX));
         $isdir = $rest === '' || substr($rest, -1) === '/';
         $segments = array_map('rawurldecode', array_values(array_filter(explode('/', $rest), 'strlen')));
         $params = self::params_from_segments($segments, true, $isdir);
         if ($params === null) {
-            throw new moodle_exception(
-                'invalidparameter',
-                'debug',
-                '',
-                null,
-                'Malformed file URI; expected moodle://file/{contextid}/{component}/{filearea}/{itemid}/{path}{filename}.'
-            );
+            throw new transfer_exception(400, 'invalidparameter', 'Malformed file URI; expected '
+                . 'moodle://file/{contextid}/{component}/{filearea}/{itemid}/{path}{filename}.');
         }
         return $params;
     }
@@ -136,7 +131,7 @@ class locator {
         $root = rtrim($strip($CFG->wwwroot), '/');
         $target = $strip(trim($url));
         if (strpos($target, $root . '/') !== 0) {
-            throw new moodle_exception('invalidparameter', 'debug', '', null, 'The URL is not a file URL on this Moodle site.');
+            throw new transfer_exception(400, 'invalidparameter', 'The URL is not a file URL on this Moodle site.');
         }
         $parts = explode('?', substr($target, strlen($root)), 2);
         $path = $parts[0];
@@ -160,7 +155,7 @@ class locator {
             }
             return ['relativepath' => $relativepath, 'draft' => $script === '/draftfile.php'];
         }
-        throw new moodle_exception('invalidparameter', 'debug', '', null, 'Unrecognised file URL.');
+        throw new transfer_exception(400, 'invalidparameter', 'Unrecognised file URL.');
     }
 
     /**

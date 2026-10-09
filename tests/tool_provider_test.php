@@ -945,13 +945,13 @@ final class tool_provider_test extends externallib_advanced_testcase {
             'destructiveHint' => false,
             'idempotentHint' => true,
             'openWorldHint' => false,
-        ], $tools['core_webservice_get_site_info']['annotations']);
+        ], array_diff_key($tools['core_webservice_get_site_info']['annotations'], ['title' => true]));
         $this->assertSame([
             'readOnlyHint' => false,
             'destructiveHint' => true,
             'idempotentHint' => false,
             'openWorldHint' => false,
-        ], $tools['core_course_delete_courses']['annotations']);
+        ], array_diff_key($tools['core_course_delete_courses']['annotations'], ['title' => true]));
         $this->assertContains('operator', array_column($result['groups'], 'id'));
         $this->assertContains('core', array_column($result['groups'], 'id'));
     }

@@ -55,7 +55,7 @@ class upload_handler {
                 header('Allow: PUT, POST, OPTIONS');
                 throw new transfer_exception(405, 'methodnotallowed', 'Upload with PUT (raw body) or POST (raw or multipart).');
             }
-            $ticket = required_param('ticket', PARAM_RAW_TRIMMED);
+            $ticket = tickets::from_request('ul');
             $redeemed = tickets::redeem('ul', $ticket);
             endpoint::login($redeemed['user'], $redeemed['restriction']);
             $claims = $redeemed['claims'];

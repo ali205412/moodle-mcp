@@ -222,8 +222,8 @@ class file_service {
         }
         $info = $curl->get_info();
         if ($result !== true || (int)($info['http_code'] ?? 0) !== 200) {
-            throw new moodle_exception('error', 'moodle', '', null, 'Could not fetch the URL: '
-                . (is_string($result) ? $result : 'HTTP ' . (int)($info['http_code'] ?? 0)));
+            $reason = is_string($result) ? $result : 'HTTP ' . (int)($info['http_code'] ?? 0);
+            throw new transfer_exception(400, 'fetchfailed', 'Could not fetch the URL: ' . $reason);
         }
 
         $filename = (string)($args['filename'] ?? '');
@@ -376,7 +376,7 @@ class file_service {
 
         $options = course_overviewfiles_options($course);
         if ($options === null) {
-            throw new moodle_exception('error', 'moodle', '', null, 'Course images are disabled on this site.');
+            throw new transfer_exception(400, 'error', 'Course images are disabled on this site.');
         }
         $draftitemid = (int)($args['draftitemid'] ?? 0);
         $usercontextid = context_user::instance($USER->id)->id;
@@ -489,6 +489,6 @@ class file_service {
      * @return moodle_exception
      */
     private static function invalid(string $message): moodle_exception {
-        return new moodle_exception('invalidparameter', 'debug', '', null, $message);
+        return new transfer_exception(400, 'invalidparameter', $message);
     }
 }

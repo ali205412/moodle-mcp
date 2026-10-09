@@ -48,6 +48,12 @@ class file_reader {
     /** Image types clients can display. */
     private const IMAGE_MIMETYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 
+    /** Largest file whose text is extracted within a request. */
+    private const EXTRACT_MAX = 104857600;
+
+    /** Most pages rendered per file_read call. */
+    private const MAX_RENDER_PAGES = 10;
+
     /** Seconds to wait for a document conversion. */
     private const CONVERSION_WAIT = 10;
 
@@ -92,7 +98,7 @@ class file_reader {
                 }
             }
         } else {
-            throw new moodle_exception('invalidparameter', 'debug', '', null, 'Provide uri or url.');
+            throw new transfer_exception(400, 'invalidparameter', 'Provide uri or url.');
         }
 
         $contextid = (int)explode('/', ltrim($relativepath, '/'))[0];
@@ -110,7 +116,7 @@ class file_reader {
             throw new moodle_exception('filenotfound', 'error');
         }
         if ($info !== null && $info->is_directory()) {
-            throw new moodle_exception('invalidparameter', 'debug', '', null, 'That is a folder; use file_list to browse it.');
+            throw new transfer_exception(400, 'invalidparameter', 'That is a folder; use file_list to browse it.');
         }
         // The user's own finished exports are not in file_browser; they are read straight from storage.
         $export = $info === null && $params !== null ? export_service::own_file($params) : null;
@@ -205,6 +211,10 @@ class file_reader {
             $source = $this->convert($source, (string)$args['convert_to']);
         }
 
+        if (!empty($args['render'])) {
+            return $this->render_pages($source, (string)($args['pages'] ?? '1-5'));
+        }
+
         $header = sprintf(
             "%s — %s, %s%s",
             $source['filename'],
@@ -215,22 +225,35 @@ class file_reader {
         $kind = self::kind($source['mimetype'], $source['filename']);
         $readable = $source['file'] !== null || $source['path'] !== null;
 
+        // Documents (Office, OpenDocument, PDF, RTF, HTML) come back as their text: a link or a blob is useless to
+        // clients that cannot fetch URLs or open binaries.
+        $format = $readable && empty($args['convert_to']) ? text_extractor::format($source['filename'], $source['mimetype'])
+            : null;
+        if ($format !== null) {
+            $text = $this->extract($source, $format);
+            if ($text !== null) {
+                return $this->page_text(
+                    "Text extracted from {$header}",
+                    strlen($text),
+                    $args,
+                    $source,
+                    static fn(int $offset, int $length) => (string)substr($text, $offset, $length)
+                );
+            }
+            if ($format === 'pdf') {
+                $header .= "\nNo text could be extracted (scanned pages, or no pdftotext on the server)."
+                    . (pdf_tools::can_render() ? ' Call file_read with render="images" to see the pages.' : '');
+            }
+        }
+
         if ($kind === 'text' && $readable) {
-            $offset = max(0, (int)($args['offset'] ?? 0));
-            $length = min(max(1, (int)($args['length'] ?? $textmax)), $textmax);
-            $raw = $this->read_bytes($source, $offset, $length);
-            if ($offset + strlen($raw) < $source['size']) {
-                $raw = self::trim_partial_utf8($raw);
-            }
-            $end = $offset + strlen($raw);
-            $text = fix_utf8($raw);
-            $blocks = [['type' => 'text', 'text' => $header . ($offset > 0 || $end < $source['size']
-                ? "\nShowing bytes {$offset}-{$end} of {$source['size']}." : '')], ['type' => 'text', 'text' => $text]];
-            if ($end < $source['size']) {
-                $blocks[] = ['type' => 'text', 'text' => "More content follows: call file_read with offset={$end} to continue"
-                    . $this->download_hint($source)];
-            }
-            return ['content' => $blocks];
+            return $this->page_text(
+                $header,
+                $source['size'],
+                $args,
+                $source,
+                fn(int $offset, int $length) => $this->read_bytes($source, $offset, $length)
+            );
         }
 
         if ($readable && $source['size'] <= $binmax) {
@@ -285,6 +308,17 @@ class file_reader {
         $source = $this->open($this->resolve($uri, null), max($textmax, $binmax));
         $istext = self::kind($source['mimetype'], $source['filename']) === 'text';
         $readable = $source['file'] !== null || $source['path'] !== null;
+
+        $format = $readable ? text_extractor::format($source['filename'], $source['mimetype']) : null;
+        $text = $format !== null ? $this->extract($source, $format) : null;
+        if ($text !== null) {
+            if (strlen($text) > $textmax) {
+                $cut = self::trim_partial_utf8(substr($text, 0, $textmax));
+                $text = fix_utf8($cut) . "\n\n[Truncated: call the file_read tool with this uri and offset=" . strlen($cut)
+                    . ' for the rest.]';
+            }
+            return ['contents' => [['uri' => $uri, 'mimeType' => 'text/plain', 'text' => $text]]];
+        }
 
         if ($readable && $istext && $source['size'] <= $textmax) {
             return ['contents' => [['uri' => $uri, 'mimeType' => $source['mimetype'],
@@ -350,6 +384,132 @@ class file_reader {
         }
         return array_filter(['k' => tickets::KIND_FILE, 'rp' => $relativepath, 'dr' => $target['draft'] ? 1 : 0,
             'fd' => $forcedownload || $target['draft'] ? 1 : 0, 'pv' => $preview], static fn($v) => $v !== null);
+    }
+
+    /**
+     * One page of text, cut on a UTF-8 boundary, with paging hints.
+     *
+     * @param string $header Header line(s).
+     * @param int $total Total bytes of text.
+     * @param array $args Tool arguments (offset, length).
+     * @param array $source Opened source.
+     * @param \Closure $read fn(int $offset, int $length): string.
+     * @return array CallToolResult.
+     */
+    private function page_text(string $header, int $total, array $args, array $source, \Closure $read): array {
+        $textmax = limits::get('inlinetextmaxbytes');
+        $offset = max(0, (int)($args['offset'] ?? 0));
+        $length = min(max(1, (int)($args['length'] ?? $textmax)), $textmax);
+        $raw = $read($offset, $length);
+        if ($offset + strlen($raw) < $total) {
+            $raw = self::trim_partial_utf8($raw);
+        }
+        $end = $offset + strlen($raw);
+        $blocks = [['type' => 'text', 'text' => $header . ($offset > 0 || $end < $total
+            ? "\nShowing bytes {$offset}-{$end} of {$total} bytes of text." : '')], ['type' => 'text', 'text' => fix_utf8($raw)]];
+        if ($end < $total) {
+            $blocks[] = ['type' => 'text', 'text' => "More content follows: call file_read with offset={$end} to continue."];
+        }
+        return ['content' => $blocks];
+    }
+
+    /**
+     * Text of a document, or null when it has none (or is too big to extract in a request).
+     *
+     * PDFs use pdftotext, then a core document converter (pdf to txt) when one is enabled.
+     *
+     * @param array $source Opened source.
+     * @param string $format text_extractor::format() result.
+     * @return string|null
+     */
+    private function extract(array $source, string $format): ?string {
+        if ($source['size'] > self::EXTRACT_MAX) {
+            return null;
+        }
+        $path = $source['path'] ?? $source['file']->copy_content_to_temp();
+        try {
+            $text = (new text_extractor())->extract($path, $format);
+        } finally {
+            if ($source['path'] === null) {
+                @unlink($path);
+            }
+        }
+        if ($text === null && $format === 'pdf' && $source['file'] !== null) {
+            try {
+                $converted = $this->convert($source, 'txt');
+                $text = trim(fix_utf8($converted['file']->get_content())) ?: null;
+            } catch (transfer_exception $e) {
+                $text = null;
+            }
+        }
+        return $text;
+    }
+
+    /**
+     * file_read render=images: PDF (or converted Office) pages as PNG image blocks.
+     *
+     * @param array $source Opened source.
+     * @param string $pages Page range: "3" or "2-6", at most MAX_RENDER_PAGES pages.
+     * @return array CallToolResult.
+     */
+    private function render_pages(array $source, string $pages): array {
+        if (
+            !preg_match('/^\s*(\d{1,5})\s*(?:-\s*(\d{1,5}))?\s*$/', $pages, $m) || (int)$m[1] < 1
+                || (isset($m[2]) && (int)$m[2] < (int)$m[1])
+        ) {
+            throw new transfer_exception(400, 'invalidparameter', 'pages must be a page or range such as "3" or "1-5".');
+        }
+        $first = (int)$m[1];
+        $last = min(isset($m[2]) ? (int)$m[2] : $first, $first + self::MAX_RENDER_PAGES - 1);
+        if ($source['file'] === null && $source['path'] === null) {
+            throw new transfer_exception(422, 'notreadable', 'This file can only be fetched through a download link.');
+        }
+        $format = text_extractor::format($source['filename'], $source['mimetype']);
+        if ($format !== 'pdf') {
+            if (!in_array($format, ['docx', 'pptx', 'xlsx', 'odf', 'rtf'], true)) {
+                throw new transfer_exception(400, 'invalidparameter', 'render="images" works for PDF and Office documents; '
+                    . 'images are returned as images by file_read without render.');
+            }
+            // Office documents are rendered through a PDF made by Moodle's document converter.
+            $source = $this->convert($source, 'pdf', 'Seeing the pages of this document needs a document converter. '
+                . 'file_read without render returns its text.');
+        }
+        $pdf = $source['path'] ?? $source['file']->copy_content_to_temp();
+        try {
+            $count = pdf_tools::page_count($pdf);
+            if ($count !== null && $first > $count) {
+                throw new transfer_exception(400, 'invalidparameter', "The document has {$count} page(s).");
+            }
+            $last = $count !== null ? min($last, $count) : $last;
+            $result = pdf_tools::render($pdf, $first, $last, limits::get('renderimagemaxbytes'));
+        } finally {
+            if ($source['path'] === null) {
+                @unlink($pdf);
+            }
+        }
+
+        $shown = array_keys($result['pages']);
+        $lastshown = $shown ? max($shown) : $first - 1;
+        $text = sprintf(
+            '%s — pages %d-%d%s, rendered at %d dpi.',
+            $source['filename'],
+            $first,
+            $lastshown,
+            $count !== null ? " of {$count}" : '',
+            $result['dpi']
+        );
+        if ($result['truncated']) {
+            $text .= ' The image size limit was reached before the requested range ended.';
+        }
+        if ($count === null || $lastshown < $count) {
+            $text .= sprintf(' Next: pages="%d-%d".', $lastshown + 1, $lastshown + self::MAX_RENDER_PAGES);
+        }
+        $blocks = [['type' => 'text', 'text' => $text]];
+        foreach ($result['pages'] as $page => $png) {
+            $blocks[] = ['type' => 'text', 'text' => "Page {$page}"];
+            $blocks[] = ['type' => 'image', 'data' => base64_encode($png), 'mimeType' => 'image/png'];
+        }
+        return ['content' => $blocks];
     }
 
     /**
@@ -507,18 +667,17 @@ class file_reader {
      *
      * @param array $source Opened source.
      * @param string $format pdf or txt.
+     * @param string|null $hint What to tell the user when no converter is available.
      * @return array Opened source for the converted file.
      */
-    private function convert(array $source, string $format): array {
+    private function convert(array $source, string $format, ?string $hint = null): array {
         $converter = new \core_files\converter();
         if ($source['file'] === null || !$converter->can_convert_storedfile_to($source['file'], $format)) {
-            throw new moodle_exception(
-                'error',
-                'moodle',
-                '',
-                null,
-                "Conversion to {$format} is not available for this file (no enabled document converter supports it)."
-            );
+            $extension = strtolower(pathinfo($source['filename'], PATHINFO_EXTENSION));
+            throw new transfer_exception(422, 'noconverter', "No enabled document converter can turn this .{$extension} file "
+                . "into {$format}. A site administrator can enable one in Site administration > Plugins > Document converters "
+                . '(for example Google Drive or Microsoft OneDrive). ' . ($hint ?? 'Without one, file_read already returns '
+                . 'the text of PDF and Office files, and render="images" shows PDF pages.'));
         }
         $conversion = $converter->start_conversion($source['file'], $format);
         for ($i = 0; $i < self::CONVERSION_WAIT && $conversion->get('status') != \core_files\conversion::STATUS_COMPLETE; $i++) {
@@ -530,13 +689,8 @@ class file_reader {
         }
         $dest = $conversion->get('status') == \core_files\conversion::STATUS_COMPLETE ? $conversion->get_destfile() : null;
         if (!$dest) {
-            throw new moodle_exception(
-                'error',
-                'moodle',
-                '',
-                null,
-                "The {$format} conversion did not finish in time or failed; try again later."
-            );
+            throw new transfer_exception(422, 'conversionfailed', "The document converter did not produce {$format} in time "
+                . 'or failed; try again later.');
         }
         $converted = $this->source(
             $source['target'],

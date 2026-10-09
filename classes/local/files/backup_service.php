@@ -40,13 +40,6 @@ use webservice_mcp\local\mcp\call_context;
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class backup_service {
-    /** Restore targets accepted by restore_from_draft. */
-    private const TARGETS = [
-        'new_course' => backup::TARGET_NEW_COURSE,
-        'existing_add' => backup::TARGET_EXISTING_ADDING,
-        'existing_delete' => backup::TARGET_EXISTING_DELETING,
-    ];
-
     /**
      * Constructor: load the backup library.
      */
@@ -54,6 +47,22 @@ class backup_service {
         global $CFG;
         require_once($CFG->dirroot . '/backup/util/includes/backup_includes.php');
         require_once($CFG->dirroot . '/backup/util/includes/restore_includes.php');
+    }
+
+    /**
+     * Restore targets accepted by restore_from_draft.
+     *
+     * A method, not a class constant: PHP evaluates constant expressions when the object is created, before the
+     * constructor has loaded the backup library, so a constant naming backup:: fatals on a cold request.
+     *
+     * @return array<string, int>
+     */
+    private static function targets(): array {
+        return [
+            'new_course' => backup::TARGET_NEW_COURSE,
+            'existing_add' => backup::TARGET_EXISTING_ADDING,
+            'existing_delete' => backup::TARGET_EXISTING_DELETING,
+        ];
     }
 
     /**
@@ -79,7 +88,7 @@ class backup_service {
             [$type, $id, $context, $cap] = [backup::TYPE_1COURSE, (int)$args['courseid'],
                 context_course::instance((int)$args['courseid']), 'moodle/backup:backupcourse'];
         } else {
-            throw new moodle_exception('invalidparameter', 'debug', '', null, 'Provide courseid, sectionid or cmid.');
+            throw new transfer_exception(400, 'invalidparameter', 'Provide courseid, sectionid or cmid.');
         }
         locator::check_restriction($context, $ctx->restrictedcontext);
         external_api::validate_context($context);
@@ -153,7 +162,7 @@ class backup_service {
             'id, backupid, operation, type, itemid, userid, status, progress, timecreated, timemodified'
         );
         if (!$record || (int)$record->userid !== (int)$USER->id) {
-            throw new moodle_exception('invalidparameter', 'debug', '', null, 'No backup or restore with that id belongs to you.');
+            throw new transfer_exception(400, 'invalidparameter', 'No backup or restore with that id belongs to you.');
         }
 
         $status = (int)$record->status;
@@ -204,14 +213,8 @@ class backup_service {
 
         file_service::apply_restriction($ctx);
         $target = (string)($args['target'] ?? '');
-        if (!isset(self::TARGETS[$target])) {
-            throw new moodle_exception(
-                'invalidparameter',
-                'debug',
-                '',
-                null,
-                'target must be new_course, existing_add or existing_delete.'
-            );
+        if (!isset(self::targets()[$target])) {
+            throw new transfer_exception(400, 'invalidparameter', 'target must be new_course, existing_add or existing_delete.');
         }
         $users = !empty($args['include_users']);
 
@@ -258,7 +261,7 @@ class backup_service {
                 backup::INTERACTIVE_YES,
                 backup::MODE_ASYNC,
                 $USER->id,
-                self::TARGETS[$target]
+                self::targets()[$target]
             );
             if ($rc->get_status() == backup::STATUS_REQUIRE_CONV) {
                 $rc->convert();
@@ -283,13 +286,7 @@ class backup_service {
         }
         if (!empty($precheck['errors'])) {
             $this->abandon_restore($newcourse ? $courseid : 0, $path);
-            throw new moodle_exception(
-                'error',
-                'moodle',
-                '',
-                null,
-                'Restore prechecks failed: ' . implode(' ', $precheck['errors'])
-            );
+            throw new transfer_exception(400, 'error', 'Restore prechecks failed: ' . implode(' ', $precheck['errors']));
         }
 
         $task = new \core\task\asynchronous_restore_task();
@@ -337,7 +334,7 @@ class backup_service {
         $files = array_values(array_filter($files, static fn(stored_file $f) => $wanted !== ''
             ? $f->get_filename() === $wanted : substr(strtolower($f->get_filename()), -4) === '.mbz'));
         if (count($files) !== 1) {
-            throw new moodle_exception('invalidparameter', 'debug', '', null, $files
+            throw new transfer_exception(400, 'invalidparameter', $files
                 ? 'Several .mbz files are in that draft area; pass filename.' : 'No matching .mbz file in that draft area.');
         }
         return $files[0];
@@ -373,13 +370,8 @@ class backup_service {
             return;
         }
         if ($setting->get_status() !== \base_setting::NOT_LOCKED) {
-            throw new moodle_exception(
-                'error',
-                'moodle',
-                '',
-                null,
-                "The backup setting '{$name}' is locked by site configuration or your permissions."
-            );
+            throw new transfer_exception(400, 'settinglocked', "The backup setting '{$name}' is locked by site configuration "
+                . 'or your permissions.');
         }
         $setting->set_value($value);
     }

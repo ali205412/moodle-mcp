@@ -113,7 +113,7 @@ final class files_export_test extends advanced_testcase {
         $this->assertSame('finished', $status['state']);
         $this->assertStringStartsWith('moodle://file/' . context_user::instance($this->teacher->id)->id
             . '/webservice_mcp/exports/', $status['file']['uri']);
-        $this->assertStringContainsString('/webservice/mcp/pluginfile.php?ticket=', $status['file']['download']['url']);
+        $this->assertStringContainsString('/webservice/mcp/pluginfile.php?t=', $status['file']['download']['url']);
 
         $file = download_handler::export_file($this->ticket_fid($status), context_user::instance($this->teacher->id));
         $entries = $file->list_files(get_file_packer('application/zip'));
@@ -126,6 +126,39 @@ final class files_export_test extends advanced_testcase {
             ['uri' => $status['file']['uri']],
             new call_context(call_context::ERA_MODERN, '2026-07-28', $this->teacher, null, null, true, 'files', [], 'f_test')
         ));
+    }
+
+    /**
+     * Asking again returns the user's existing export (queued or finished); refresh or other arguments build a new one.
+     */
+    public function test_repeat_requests_reuse_the_export(): void {
+        $args = ['cmid' => $this->assign->cmid];
+        $first = $this->call($this->teacher, 'export_assignment_submissions', $args);
+        $again = $this->call($this->teacher, 'export_assignment_submissions', $args);
+        $this->assertSame($first['backupid'], $again['backupid']);
+        $this->assertTrue($again['reused']);
+        $this->assertSame('queued', $again['state']);
+
+        $this->run_exports();
+        $finished = $this->call($this->teacher, 'export_assignment_submissions', $args);
+        $this->assertSame($first['backupid'], $finished['backupid']);
+        $this->assertSame('finished', $finished['state']);
+        $this->assertArrayHasKey('download', $finished['file']);
+
+        // Different arguments and refresh=true give new exports; another user never gets this one.
+        $group = $this->getDataGenerator()->create_group(['courseid' => $this->course->id]);
+        $this->assertNotSame($first['backupid'], $this->call(
+            $this->teacher,
+            'export_assignment_submissions',
+            $args + ['groupid' => $group->id]
+        )['backupid']);
+        $fresh = $this->call($this->teacher, 'export_assignment_submissions', $args + ['refresh' => true]);
+        $this->assertNotSame($first['backupid'], $fresh['backupid']);
+        $this->assertSame('queued', $fresh['state']);
+        $this->assertArrayNotHasKey('reused', $fresh);
+        $this->assertSame($fresh['backupid'], $this->call($this->teacher, 'export_assignment_submissions', $args)['backupid']);
+        $teacher2 = $this->getDataGenerator()->create_and_enrol($this->course, 'editingteacher');
+        $this->assertArrayNotHasKey('reused', $this->call($teacher2, 'export_assignment_submissions', $args));
     }
 
     /**
@@ -189,7 +222,8 @@ final class files_export_test extends advanced_testcase {
         $this->run_exports();
         $this->assertSame(0, export_service::purge());
 
-        $pending = $this->call($this->teacher, 'export_assignment_submissions', ['cmid' => $this->assign->cmid]);
+        $pending = $this->call($this->teacher, 'export_assignment_submissions', ['cmid' => $this->assign->cmid,
+            'refresh' => true]);
         $this->assertSame(2, export_service::purge(time() + export_service::LIFETIME + 1));
         $this->assertSame(0, $this->count_export_files());
         $this->run_exports();
@@ -233,7 +267,7 @@ final class files_export_test extends advanced_testcase {
      */
     private function ticket_fid(array $status): int {
         parse_str((string)parse_url($status['file']['download']['url'], PHP_URL_QUERY), $query);
-        $body = explode('.', $query['ticket'])[0];
+        $body = explode('.', \webservice_mcp\local\files\tickets::lookup('dl', $query['t']))[0];
         return (int)json_decode(base64_decode(strtr($body, '-_', '+/')), true)['fid'];
     }
 

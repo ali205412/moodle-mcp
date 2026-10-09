@@ -43,7 +43,7 @@ class download_handler {
             if (!endpoint::cors('GET, HEAD, OPTIONS')) {
                 return;
             }
-            $auth = self::authorize(required_param('ticket', PARAM_RAW_TRIMMED));
+            $auth = self::authorize(tickets::from_request('dl'));
             self::serve($auth['claims'], $auth['context']);
         } catch (\Throwable $e) {
             endpoint::send_error($e);

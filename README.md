@@ -499,7 +499,7 @@ user's draft area and `file_browser` write checks, backups and restores through 
 | Tool | Purpose |
 | --- | --- |
 | `file_list` | Browse contexts, areas and folders (`courseid` + `recursive` lists course and activity files); includes upload limits and quota for your own areas. |
-| `file_read` | Read by `moodle://file/...` URI or any on-site file URL. Text inline (paged), images/audio as content blocks, other files as base64 up to the inline limit, otherwise a download link. Areas `file_browser` does not cover are read in-process when the activity lists the file for the user (as `core_course_get_contents` does); anything else gets a download link (no HTTP self-requests). Optional `convert_to` pdf/txt via document converters. |
+| `file_read` | Read by `moodle://file/...` URI or any on-site file URL. Returns content, not links: Word (paragraphs, tables, headers/footers), PowerPoint (slides in order, speaker notes), Excel (sheets as TSV), OpenDocument, RTF, HTML and PDF come back as extracted text (pure PHP; PDF via `pdftotext` when installed, else a core document converter, else the PDF itself up to the inline limit); text files as text; all text is paged with `offset`/`length`. Images and audio come back as content blocks, other files as base64 up to the inline limit. `render="images"` with `pages="1-5"` (max 10) returns PDF pages as PNG images via pdftoppm or Ghostscript (`$CFG->pathtogs`), Office files after conversion by a core document converter; the PNG bytes per call are capped (`renderimagemaxbytes`, resolution lowered to fit). `convert_to` pdf/txt uses a core document converter and explains how to enable one when none is. |
 | `file_get_download_url` | Signed, short-lived link for any file the user can download (any size, Range/resume). |
 | `file_create_upload_url` | Signed upload link into the user's draft area (any size). |
 | `file_upload` / `file_upload_from_url` | Small inline uploads / server-side fetch of a public URL (with Moodle's cURL security rules). |
@@ -512,7 +512,10 @@ user's draft area and `file_browser` write checks, backups and restores through 
 Uploaded files land in the draft area and return a `draftitemid`; pass it to any Moodle function that accepts
 draft files (assignment submissions, forum attachments, `core_user_add_user_private_files`, `wrapper_course_add_module`, ...).
 
-### Download endpoint: `/webservice/mcp/pluginfile.php?ticket=...`
+### Download endpoint: `/webservice/mcp/pluginfile.php?t=...`
+
+Links are short: `t` is a random 32-character id mapped (table `webservice_mcp_link`) to the signed ticket, which is
+verified exactly as before. Links issued before short links (`?ticket=...`) keep working until they expire.
 
 - `GET`/`HEAD`; `OPTIONS` for CORS preflight (origins from the *Allowed transport origins* setting).
 - Single files are served by `file_pluginfile()` (or `send_stored_file()` for the user's own drafts) with ETag/304,
@@ -525,7 +528,7 @@ draft files (assignment submissions, forum attachments, `core_user_add_user_priv
   `downloadfiles`, or the user loses `webservice/mcp:use`.
 - Errors are JSON `{"error": "...", "errorcode": "..."}` with status 400, 401, 403, 404, 413, 429 or 503.
 
-### Upload endpoint: `/webservice/mcp/upload.php?ticket=...`
+### Upload endpoint: `/webservice/mcp/upload.php?t=...`
 
 - `PUT` (or `POST`) raw body: `curl -T ./file.pdf "<url>&filename=file.pdf"`. The body is streamed to disk in 1 MB
   chunks and refused with 413 above the user's limit. The name comes from the ticket, `filename=` or `Content-Disposition`.
@@ -551,7 +554,8 @@ draft files (assignment submissions, forum attachments, `core_user_add_user_priv
 
 `downloadticketttl` (900 s), `uploadticketttl` (3600 s), `inlinetextmaxbytes` (256 KB), `inlinebinarymaxbytes` (5 MB),
 `uploadinlinemaxbytes` (15 MB), `uploadfromurlmaxbytes` (100 MB), `uploadmaxbytes` (2 GB),
-`uploadmaxpartials` (5), `uploadmaxpartialbytes` (0 = twice the upload limit). Ticket lifetimes are capped at one day; clients can
+`uploadmaxpartials` (5), `uploadmaxpartialbytes` (0 = twice the upload limit), `renderimagemaxbytes` (4 MB),
+`pathtopdftotext` (empty = next to `$CFG->pathtopdftoppm`, then `/usr/bin`, `/usr/local/bin`). Ticket lifetimes are capped at one day; clients can
 request shorter links but not longer ones. The connector's external service must have *Can download files* (for
 `file_read`, file resources, links and exports) and *Can upload files* enabled for those tools to appear and work.
 

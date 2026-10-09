@@ -52,8 +52,8 @@ class question_category_service {
         ?string $idnumber = null
     ): array {
         global $DB;
-        require_once($this->dirroot() . '/lib/questionlib.php');
-        require_once($this->dirroot() . '/lib/filelib.php');
+        moodle_lib::load('lib/questionlib.php');
+        moodle_lib::load('lib/filelib.php');
 
         $context = context::instance_by_id($contextid, MUST_EXIST);
         external_api::validate_context($context);
@@ -120,8 +120,8 @@ class question_category_service {
         ?string $idnumber = null
     ): array {
         global $DB;
-        require_once($this->dirroot() . '/lib/questionlib.php');
-        require_once($this->dirroot() . '/lib/filelib.php');
+        moodle_lib::load('lib/questionlib.php');
+        moodle_lib::load('lib/filelib.php');
 
         if ($name === '') {
             throw new \moodle_exception('categorynamecantbeblank', 'question');
@@ -201,8 +201,8 @@ class question_category_service {
      */
     public function delete_category(int $categoryid, ?int $movequestionstocategoryid = null): array {
         global $DB;
-        require_once($this->dirroot() . '/lib/questionlib.php');
-        require_once($this->dirroot() . '/lib/filelib.php');
+        moodle_lib::load('lib/questionlib.php');
+        moodle_lib::load('lib/filelib.php');
 
         $this->require_can_delete_category($categoryid);
         $category = $DB->get_record('question_categories', ['id' => $categoryid], '*', MUST_EXIST);
@@ -372,15 +372,5 @@ class question_category_service {
               WHERE c.id = ? AND p.parent = 0",
             [$categoryid]
         );
-    }
-
-    /**
-     * Return Moodle dirroot.
-     *
-     * @return string
-     */
-    private function dirroot(): string {
-        global $CFG;
-        return $CFG->dirroot;
     }
 }

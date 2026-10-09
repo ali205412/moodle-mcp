@@ -86,7 +86,7 @@ final class files_backup_test extends advanced_testcase {
             'moodle://file/' . context_user::instance($teacher->id)->id . '/user/backup/',
             $status['file']['uri']
         );
-        $this->assertStringContainsString('/webservice/mcp/pluginfile.php?ticket=', $status['file']['download']['url']);
+        $this->assertStringContainsString('/webservice/mcp/pluginfile.php?t=', $status['file']['download']['url']);
 
         // Somebody else cannot see it.
         $this->expectException(\moodle_exception::class);

@@ -54,7 +54,7 @@ class badge_service {
      */
     public function create_badge(array $payload, ?int $courseid = null): array {
         global $PAGE;
-        require_once($this->libdir() . '/badgeslib.php');
+        moodle_lib::load('lib/badgeslib.php');
 
         $context = $this->creation_context($courseid);
         external_api::validate_context($context);
@@ -78,7 +78,7 @@ class badge_service {
      * @return array
      */
     public function update_badge(int $badgeid, array $payload): array {
-        require_once($this->libdir() . '/badgeslib.php');
+        moodle_lib::load('lib/badgeslib.php');
 
         $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
@@ -104,7 +104,7 @@ class badge_service {
      * @return array
      */
     public function update_badge_message(int $badgeid, array $payload): array {
-        require_once($this->libdir() . '/badgeslib.php');
+        moodle_lib::load('lib/badgeslib.php');
 
         $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
@@ -125,7 +125,7 @@ class badge_service {
      * @return array
      */
     public function delete_badges(array $badgeids, bool $archive = true): array {
-        require_once($this->libdir() . '/badgeslib.php');
+        moodle_lib::load('lib/badgeslib.php');
 
         $badgeids = $this->normalize_ids($badgeids);
         foreach ($badgeids as $badgeid) {
@@ -150,7 +150,7 @@ class badge_service {
      */
     public function duplicate_badge(int $badgeid): array {
         global $PAGE;
-        require_once($this->libdir() . '/badgeslib.php');
+        moodle_lib::load('lib/badgeslib.php');
 
         $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
@@ -174,7 +174,7 @@ class badge_service {
      * @return array
      */
     public function add_related_badges(int $badgeid, array $relatedbadgeids): array {
-        require_once($this->libdir() . '/badgeslib.php');
+        moodle_lib::load('lib/badgeslib.php');
 
         $badge = $this->editable_relation_badge($badgeid);
         $relatedbadgeids = $this->normalize_ids($relatedbadgeids);
@@ -200,7 +200,7 @@ class badge_service {
      * @return array
      */
     public function delete_related_badges(int $badgeid, array $relatedbadgeids): array {
-        require_once($this->libdir() . '/badgeslib.php');
+        moodle_lib::load('lib/badgeslib.php');
 
         $badge = $this->editable_relation_badge($badgeid);
         $relatedbadgeids = $this->normalize_ids($relatedbadgeids);
@@ -225,7 +225,7 @@ class badge_service {
      */
     public function save_alignment(int $badgeid, array $payload, ?int $alignmentid = null): array {
         global $DB;
-        require_once($this->libdir() . '/badgeslib.php');
+        moodle_lib::load('lib/badgeslib.php');
 
         $badge = $this->editable_relation_badge($badgeid);
         if (
@@ -253,7 +253,7 @@ class badge_service {
      * @return array
      */
     public function delete_alignments(int $badgeid, array $alignmentids): array {
-        require_once($this->libdir() . '/badgeslib.php');
+        moodle_lib::load('lib/badgeslib.php');
 
         $badge = $this->editable_relation_badge($badgeid);
         $alignmentids = $this->normalize_ids($alignmentids);
@@ -278,8 +278,8 @@ class badge_service {
      */
     public function award_badge(int $badgeid, int $recipientid, ?int $issuerroleid = null): array {
         global $CFG, $USER;
-        require_once($this->libdir() . '/badgeslib.php');
-        require_once($this->dirroot() . '/badges/lib/awardlib.php');
+        moodle_lib::load('lib/badgeslib.php');
+        moodle_lib::load('badges/lib/awardlib.php');
 
         $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
@@ -319,8 +319,8 @@ class badge_service {
      */
     public function revoke_badge(int $badgeid, int $recipientid, ?int $issuerroleid = null): array {
         global $CFG, $USER;
-        require_once($this->libdir() . '/badgeslib.php');
-        require_once($this->dirroot() . '/badges/lib/awardlib.php');
+        moodle_lib::load('lib/badgeslib.php');
+        moodle_lib::load('badges/lib/awardlib.php');
 
         $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
@@ -425,7 +425,7 @@ class badge_service {
      * @return badge
      */
     private function load_badge(int $badgeid): badge {
-        require_once($this->libdir() . '/badgeslib.php');
+        moodle_lib::load('lib/badgeslib.php');
 
         $badge = new badge($badgeid);
         $this->require_badges_enabled((int)$badge->type === BADGE_TYPE_COURSE);
@@ -535,25 +535,5 @@ class badge_service {
     private function normalize_ids(array $ids): array {
         $ids = array_values(array_unique(array_map('intval', $ids)));
         return array_values(array_filter($ids, static fn(int $id): bool => $id > 0));
-    }
-
-    /**
-     * Return Moodle libdir.
-     *
-     * @return string
-     */
-    private function libdir(): string {
-        global $CFG;
-        return $CFG->libdir;
-    }
-
-    /**
-     * Return Moodle dirroot.
-     *
-     * @return string
-     */
-    private function dirroot(): string {
-        global $CFG;
-        return $CFG->dirroot;
     }
 }

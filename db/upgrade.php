@@ -413,5 +413,25 @@ function xmldb_webservice_mcp_upgrade(int $oldversion): bool {
         upgrade_plugin_savepoint(true, 2026101007, 'webservice', 'mcp');
     }
 
+    if ($oldversion < 2026101008) {
+        // Short file links (pluginfile.php?t=<linkid>) resolving to a signed ticket.
+        $table = new xmldb_table('webservice_mcp_link');
+        $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+        $table->add_field('linkid', XMLDB_TYPE_CHAR, '32', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('payload', XMLDB_TYPE_TEXT, null, null, XMLDB_NOTNULL, null, null);
+        $table->add_field('userid', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('expiresat', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('timecreated', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        $table->add_key('userid_fk', XMLDB_KEY_FOREIGN, ['userid'], 'user', ['id']);
+        $table->add_index('linkid_uix', XMLDB_INDEX_UNIQUE, ['linkid']);
+        $table->add_index('expiresat_idx', XMLDB_INDEX_NOTUNIQUE, ['expiresat']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+
+        upgrade_plugin_savepoint(true, 2026101008, 'webservice', 'mcp');
+    }
+
     return true;
 }

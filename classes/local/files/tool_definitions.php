@@ -40,6 +40,8 @@ class tool_definitions {
             . 'draftfile.php), e.g. a fileurl from core_course_get_contents.', 4000);
         $draft = $id('Draft area id to add files to; omit to start a new draft area.');
         $filepath = $str('Folder inside the area, default "/". Example: "/week1/".', 255);
+        $refresh = $bool('Build a new export even if the same one was already requested in the last 24 hours '
+            . '(by default the existing one is returned).');
         $ttl = ['type' => 'integer', 'minimum' => 60, 'maximum' => 86400,
             'description' => 'Link lifetime in seconds (cannot exceed the site maximum).'];
 
@@ -74,19 +76,24 @@ class tool_definitions {
             'file_read' => [
                 'title' => 'Read a file',
                 'description' => 'Read a file you can access, by uri (moodle://file/... from file_list) or url (any '
-                    . 'pluginfile.php, '
-                    . 'webservice/pluginfile.php, tokenpluginfile.php or draftfile.php link on this site). Text files (txt, '
-                    . 'csv, json, xml, html, md, code, ...) come back as text, 256 KB per call by default; page through '
-                    . 'longer text with offset/length in bytes. Images come back as images you can see (large ones as a '
-                    . 'downscaled preview), audio as audio, other files up to 5 MB as base64 embedded resources. Bigger '
-                    . 'files return a download link instead: fetch it with curl or call file_get_download_url. '
-                    . 'convert_to=pdf|txt converts office documents when a document converter is enabled on the site.',
+                    . 'pluginfile.php, webservice/pluginfile.php, tokenpluginfile.php or draftfile.php link on this '
+                    . 'site). Word, PowerPoint (per slide, with speaker notes), Excel (per sheet, tab-separated), '
+                    . 'OpenDocument, RTF, HTML and PDF files come back as their text; other text files as text. Text '
+                    . 'is paged (256 KB per call by default): continue with the offset it reports. Images come back as '
+                    . 'images you can see, audio as audio, other files up to 5 MB as base64. To SEE pages (slides, '
+                    . 'diagrams, handwriting, scanned PDFs), use render="images" with pages="1-5" (max 10 pages per '
+                    . 'call): PDF pages come back as images; Office files need a document converter on the site. '
+                    . 'convert_to=pdf|txt uses the site\'s document converter when one is enabled.',
                 'properties' => [
                     'uri' => $uri,
                     'url' => $url,
-                    'offset' => ['type' => 'integer', 'minimum' => 0, 'description' => 'Text files: first byte to return.'],
-                    'length' => ['type' => 'integer', 'minimum' => 1, 'description' => 'Text files: max bytes to return.'],
-                    'convert_to' => ['type' => 'string', 'enum' => ['pdf', 'txt'], 'description' => 'Convert before reading.'],
+                    'offset' => ['type' => 'integer', 'minimum' => 0, 'description' => 'Text: first byte to return.'],
+                    'length' => ['type' => 'integer', 'minimum' => 1, 'description' => 'Text: max bytes to return.'],
+                    'render' => ['type' => 'string', 'enum' => ['images'],
+                        'description' => 'Return document pages as images instead of text.'],
+                    'pages' => $str('With render: a page or range such as "3" or "1-5" (max 10). Default "1-5".', 20),
+                    'convert_to' => ['type' => 'string', 'enum' => ['pdf', 'txt'],
+                        'description' => 'Convert with the site document converter before reading.'],
                 ],
                 'required' => [],
                 'oneof' => [['uri', 'url']],
@@ -212,8 +219,9 @@ class tool_definitions {
                 'description' => 'Build a zip of the course content you can see (Moodle\'s "Download course content"), when the '
                     . 'site and course allow it. The zip is built in the background: poll backup_status with the returned '
                     . 'backupid (export...) until it is finished, then download it with the returned link, e.g. '
-                    . 'curl -fL -o course.zip "<url>". Exports are deleted after 24 hours.',
-                'properties' => ['courseid' => $id('Course id.')],
+                    . 'curl -fL -o course.zip "<url>". Asking again returns the same export (refresh=true builds a '
+                    . 'new one); exports are deleted after 24 hours.',
+                'properties' => ['courseid' => $id('Course id.'), 'refresh' => $refresh],
                 'required' => ['courseid'],
             ],
             'export_assignment_submissions' => [
@@ -221,8 +229,10 @@ class tool_definitions {
                 'description' => 'Build a zip of all submission files of an assignment (graders only), optionally limited to '
                     . 'one group, as Moodle\'s "Download all submissions". The zip is built in the background: poll '
                     . 'backup_status with the returned backupid (export...), then download it with the returned link. '
-                    . 'Exports are deleted after 24 hours.',
-                'properties' => ['cmid' => $id('Assignment course module id.'), 'groupid' => $id('Optional group id.')],
+                    . 'Asking again returns the same export (refresh=true builds a new one); exports are deleted after 24 '
+                    . 'hours.',
+                'properties' => ['cmid' => $id('Assignment course module id.'), 'groupid' => $id('Optional group id.'),
+                    'refresh' => $refresh],
                 'required' => ['cmid'],
             ],
             'backup_create' => [

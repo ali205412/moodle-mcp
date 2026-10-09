@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<XMLDB PATH="webservice/mcp/db" VERSION="2026101007" COMMENT="XMLDB file for Moodle webservice_mcp"
+<XMLDB PATH="webservice/mcp/db" VERSION="2026101008" COMMENT="XMLDB file for Moodle webservice_mcp"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
 >
@@ -236,6 +236,24 @@
       <INDEXES>
         <INDEX NAME="bucket_time_idx" UNIQUE="false" FIELDS="bucket, timecreated"/>
         <INDEX NAME="timecreated_idx" UNIQUE="false" FIELDS="timecreated"/>
+      </INDEXES>
+    </TABLE>
+    <TABLE NAME="webservice_mcp_link" COMMENT="Short download/upload links (pluginfile.php?t=linkid) pointing at a signed ticket.">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="linkid" TYPE="char" LENGTH="32" NOTNULL="true" SEQUENCE="false" COMMENT="Random URL-safe link id."/>
+        <FIELD NAME="payload" TYPE="text" NOTNULL="true" SEQUENCE="false" COMMENT="The signed ticket the link stands for."/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="User the link was issued to."/>
+        <FIELD NAME="expiresat" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Link expiry."/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="userid_fk" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="linkid_uix" UNIQUE="true" FIELDS="linkid"/>
+        <INDEX NAME="expiresat_idx" UNIQUE="false" FIELDS="expiresat"/>
       </INDEXES>
     </TABLE>
   </TABLES>

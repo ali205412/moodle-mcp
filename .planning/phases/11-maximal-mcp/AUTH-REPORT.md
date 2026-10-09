@@ -4,8 +4,8 @@ Scope: auth/OAuth layer of `webservice_mcp` (Moodle 4.2+), security findings H1-
 plus feature requests (A) bulk admin-minted keys, (B) OAuth pre-approval, (C) Enterprise Managed Auth (jwt-bearer),
 and follow-ups (assertion replay protection, users-file upload, idnumber selector, bulk user action).
 
-- Plugin version: **`$plugin->version = 2026101007`**, release `0.9.0`. Auth schema and data changes are in upgrade
-  steps 2026100900, 2026101000, 2026101003, 2026101004, 2026101005, 2026101006 and 2026101007; 2026101001 (task table) and 2026101002 (visibility cache) belong to other owners.
+- Plugin version: **`$plugin->version = 2026101008`**, release `0.9.0`. Auth schema and data changes are in upgrade
+  steps 2026100900, 2026101000, 2026101003, 2026101004, 2026101005, 2026101006, 2026101007 and 2026101008; 2026101001 (task table) and 2026101002 (visibility cache) belong to other owners.
   Auth work no longer touches `db/`.
 - Nothing is committed.
 
@@ -1041,6 +1041,61 @@ Both failures are in files-builder's in-progress `files_export_test`:
 - `test_purge`: expected 2, got 4. That test calls `export_service::purge()` directly, not the cleanup task.
 
 All auth tests pass, including the three new ones. phpcs on this batch's files reports no errors or warnings.
+
+## Round 8: short file links table (step 2026101008)
+
+### Schema
+
+New table `webservice_mcp_link` (proposed to files-builder; their confirmation of the columns was still pending
+when this was written):
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | int seq | primary key |
+| `linkid` | char(32) | unique index `linkid_uix` |
+| `payload` | text | the signed ticket |
+| `userid` | int | key `userid_fk` |
+| `expiresat` | int | index `expiresat_idx` |
+| `timecreated` | int | |
+
+The step only creates the table (guarded by `table_exists`), so it is safe on production's 2026101007 data.
+`install.xml` and `version.php` are at 2026101008.
+
+### Related changes
+
+- `classes/task/cleanup.php` deletes rows with `expiresat < now`.
+- The observer deletes a user's links on `user_deleted`.
+- The privacy provider declares the table (`userid`, `expiresat`, `timecreated`), exports `timecreated` and
+  `expiresat` but never the payload (a bearer ticket), and deletes by user.
+- 5 lang strings were inserted at their alphabetical positions; the file is now sorted.
+
+### Test
+
+`review_fixes_test::test_link_table_upgrade_cleanup_and_privacy`:
+
+- puts the site back to 2026101007 (drops the table, sets version 2026101007) with an existing admin key;
+- runs `xmldb_webservice_mcp_upgrade(2026101007)`;
+- checks the table exists, the version is 2026101008, and the key still resolves and is found by label;
+- checks `linkid` is unique;
+- checks cleanup removes only the expired link;
+- checks privacy context lookup and deletion remove the user's links.
+
+### Results (plugin version 2026101008)
+
+| Moodle / DB | Result |
+|---|---|
+| 4.2 / MariaDB 10.11 (`scripts/run-local-tests.sh mariadb`) | `Tests: 295, Assertions: 1846, Failures: 2` |
+| 4.5 / PostgreSQL 18rc1 (isolated compose project `mcpauth`) | `Tests: 295, Assertions: 1849, Failures: 1` |
+
+The failures are in files-builder's in-progress short-link and export work:
+
+- `tool_annotations_test::test_every_listed_tool_is_annotated`: the export tools' annotations (both versions).
+- `files_access_test::test_text_over_cap_is_paged_with_download_hint`: expects a `pluginfile.php?ticket=` hint (4.2
+  only).
+
+All auth tests pass. phpcs on this batch's files is clean.
+
+The `pathtopdftotext` setting was not added: files-builder hadn't asked for it when this was written.
 
 ## Known limitations
 

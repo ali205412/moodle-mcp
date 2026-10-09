@@ -52,6 +52,42 @@ Nothing committed. All files pass `php -l`; my files pass phpcs (moodle standard
 | backup_status | Owner only. Reports state queued, running, finished or failed, plus progress. A finished backup returns the .mbz `uri` and a download link; a finished restore returns `courseid` and `courseurl`. |
 | restore_from_draft | Source is `draftitemid` (with `filename` if needed) or `uri`. `target` is new_course (`categoryid`, which needs `moodle/course:create`), existing_add or existing_delete (`courseid`). Needs `moodle/restore:restorecourse`, plus `moodle/restore:uploadfile` for draft sources and `moodle/restore:userinfo` if `include_users`. Extract, restore_controller (ASYNC, convert if needed), finish_ui, execute_precheck, queue `asynchronous_restore_task`. On precheck errors the skeleton course and temp files are cleaned up. |
 
+## Idempotent exports
+
+`export_course_content` and `export_assignment_submissions` stay `readOnlyHint: true` (they package content the user can already read), and are idempotent:
+- A repeat call by the same user with the same arguments (courseid, or cmid + groupid) returns the newest unexpired export that is queued, running or finished, via the status result plus `reused: true`.
+- Failed exports are not reused.
+- `refresh: true` forces a new build.
+- The annotations are `idempotentHint: true`, `destructiveHint: false`, `openWorldHint: false`.
+- Test: `files_export_test::test_repeat_requests_reuse_the_export`.
+
+## Reading document content (production fix)
+
+Clients like claude.ai cannot follow tool-provided URLs, so `file_read` returns content through MCP for every common type.
+
+- **Text extraction** (`text_extractor.php`, pure PHP: ZipArchive + DOM, no shell):
+  - docx: paragraphs, tables as `| a | b |`, headers, footers, footnotes, endnotes.
+  - pptx: slides in presentation order (sldIdLst + rels) with `## Slide N` headings and speaker notes; slide-number placeholders are skipped.
+  - xlsx: `## Sheet: name` plus TSV rows, shared and inline strings, gaps kept.
+  - odt/odp/ods: paragraphs, headings, tables or sheets, slides, notes.
+  - rtf: basic parsing; html: scripts and styles stripped, then `html_to_text`.
+  - Archive members are capped at 50 MB each and 200 MB in total; XML is parsed with LIBXML_NONET and no entity expansion.
+  - Text is paged with `offset`/`length` and the total size reported. This is now the default result for these types; damaged files fall back to the old blob or link result.
+- **PDF text** (`pdf_tools.php`):
+  - Uses `pdftotext -layout`. The binary comes from setting `pathtopdftotext`, else next to `$CFG->pathtopdftoppm`, else `/usr/bin` or `/usr/local/bin`.
+  - Otherwise falls back to a core document converter (pdf to txt) when one is enabled.
+  - Otherwise returns the PDF as a blob (≤ inline limit) with a note suggesting `render="images"`.
+- **Page images:** `render="images"` with `pages="N"` or `"N-M"` (max 10 pages per call).
+  - PDFs are rasterised by pdftoppm, or Ghostscript (`$CFG->pathtogs`; `-dSAFER -dBATCH -dNOPAUSE -sDEVICE=png16m`).
+  - Office files are converted to PDF first through `\core_files\converter`. Without a converter, a clear `noconverter` error points to text extraction.
+  - The PNG total is capped by `renderimagemaxbytes` (default 4 MB): the resolution is lowered from 96 dpi (min 36), then pages are dropped, and the result says which pages to request next.
+  - Commands run without a shell (proc_open argument array, so no quoting is involved), in a request temp dir, with a 30 s timeout and an output cap.
+- **convert_to without a converter:** `noconverter` isError naming "Site administration > Plugins > Document converters" and suggesting text extraction and render.
+- **Readable errors everywhere:** every file-tool error that used `moodle_exception('invalidparameter'|'error', …, debuginfo)` (shown to clients as just "Invalid parameter value detected" or "error" without developer debugging) is now a `transfer_exception` whose message is the real reason.
+- **resources/read** of a document returns its extracted text (truncated at the inline text limit, with a pointer to `file_read` offsets).
+- **Short links:** `tickets::download_url`/`upload_url` store the signed ticket in `webservice_mcp_link` (auth-fixer's 2026101008 schema: linkid, payload, userid, expiresat, timecreated) and return `pluginfile.php?t=<32 hex>` or `upload.php?t=…`. The endpoints read `t` via `tickets::from_request()`; `lookup()` only returns a payload that verifies for the endpoint's purpose. Old `?ticket=` links keep working until they expire. The cleanup task deletes expired rows.
+- **New settings:** `pathtopdftotext` (configexecutable) and `renderimagemaxbytes` (4 MB, max 20 MB).
+
 ## Asynchronous exports
 
 - **Queue:** the export tools check permissions, write `state.json` (`webservice_mcp/exportstate`, itemid = export id, in the user's context) with state `queued`, and queue `\webservice_mcp\local\files\export_task` with `set_userid` = the user. They return `{backupid: "export<id>", state: "queued"}`.
@@ -145,8 +181,8 @@ Success on the download endpoint is the file itself: 200, 206 for Range requests
 ## Tests
 
 - New: 5 test files with 37 test methods (I didn't count assertions separately).
-- Moodle 4.2.11 / MariaDB 10.11, with asynchronous exports: `OK (293 tests, 1823 assertions)`.
-- Moodle 4.5.15 / PostgreSQL (isolated compose project `filesx`), with asynchronous exports: `OK (293 tests, 1826 assertions)`.
+- Moodle 4.2.11 / MariaDB 10.11 (CI image now has ghostscript and poppler-utils): `OK (305 tests, 1896 assertions)`, no skips, so pdftotext and page rendering are exercised.
+- Moodle 4.5.15 / PostgreSQL (isolated compose project `filesx`, image rebuilt): `OK (305 tests, 1899 assertions)`, no skips.
 - Export regression tests (`tests/files_export_test.php`): builds in cron (assignment and course content), permission re-check at build time (failed status), owner isolation (status, read, download), purge (and a purged queued export builds nothing), up-front permission checks.
 - No test does outbound HTTP:
   - The antivirus test uses the offline scanner double `antivirus_mcpfilestest`, whose incident report skips the geoplugin lookup.

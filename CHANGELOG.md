@@ -1,6 +1,17 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Version 0.9.2 (2026101008)
+- `file_read` returns real content: text from docx, pptx (slides + speaker notes), xlsx, odt/odp/ods, rtf and html in
+  pure PHP; PDF text via pdftotext; `render: "images"` turns PDF and Office pages into PNG images (Ghostscript or
+  poppler, Office via the core document converter)
+- Clear error messages from every file tool (no more "error occurred" without developer debugging)
+- Short download and upload links (`?t=<id>`, table `webservice_mcp_link`)
+- Exports are idempotent: a repeat request returns the existing export (`refresh: true` forces a new one)
+- Moodle Explorer app: fixed a JavaScript syntax error that left the app on "Loading"; handles cancelled calls
+- Fixed `backup_status`, `backup_create` and `restore_from_draft` failing on a cold request
+- Every tool carries a title and complete read-only/destructive annotations
+
 ## Version 0.9.1 (2026101007)
 - Course content and assignment submission exports build in cron and download as stored files (served by
   X-Accel-Redirect where configured), so they no longer hold a PHP worker; status via `backup_status`

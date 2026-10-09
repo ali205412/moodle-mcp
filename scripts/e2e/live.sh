@@ -3,6 +3,13 @@
 # Usage: scripts/e2e/live.sh [moodle-source-dir]   (default: tmp/moodle). Leaves containers running; `live.sh down` removes them.
 set -euo pipefail
 
+# MCP Apps ship inline JavaScript that no PHP test executes: a syntax error leaves the app stuck on "Loading".
+for app in "$(dirname "$0")"/../../apps/*.html; do
+    python3 -c 'import re,sys; print(re.search(r"<script>(.*)</script>", open(sys.argv[1]).read(), re.S).group(1))' "$app" \
+        > /tmp/mcp-app-check.js
+    if ! node --check /tmp/mcp-app-check.js; then echo "JS syntax error in $app" >&2; exit 1; fi
+done
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="${WORK:-/tmp/mcp-e2e}"
 PORT="${PORT:-8099}"

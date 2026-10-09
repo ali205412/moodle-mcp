@@ -491,7 +491,7 @@ final class files_upload_test extends advanced_testcase {
     public function test_create_upload_url_allocates_draft(): void {
         $result = tools::execute('file_create_upload_url', ['filename' => 'big.iso'], $this->ctx)['structuredContent'];
         $this->assertGreaterThan(0, $result['draftitemid']);
-        $this->assertStringContainsString('/webservice/mcp/upload.php?ticket=', $result['url']);
+        $this->assertStringContainsString('/webservice/mcp/upload.php?t=', $result['url']);
         $this->assertStringContainsString('curl -fS -T', $result['curl']);
     }
 }

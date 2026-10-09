@@ -37,6 +37,7 @@ class limits {
         'uploadmaxbytes' => [2147483648, PHP_INT_MAX],
         'uploadmaxpartials' => [5, 1000],
         'uploadmaxpartialbytes' => [0, PHP_INT_MAX],
+        'renderimagemaxbytes' => [4194304, 20971520],
     ];
 
     /**

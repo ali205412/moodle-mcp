@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     default-mysql-client \
+    ghostscript \
     git \
     libfreetype6-dev \
     libicu-dev \
@@ -31,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxml2-dev \
     libzip-dev \
     locales \
+    poppler-utils \
     postgresql-client \
     rsync \
     unzip \

@@ -187,6 +187,7 @@ class tool_provider {
 
         return [
             'name' => $entry['name'],
+            'title' => self::native_title((string)$entry['name']),
             'description' => $entry['description'],
             'inputSchema' => $entry['inputSchema'],
             'outputSchema' => [
@@ -232,12 +233,26 @@ class tool_provider {
         $readonly = ($entry['mutability'] ?? 'write') === 'read';
 
         return [
+            'title' => self::native_title((string)$entry['name']),
             'readOnlyHint' => $readonly,
             'destructiveHint' => !$readonly && (!empty($entry['annotations']['destructiveHint'])
                 || in_array('data_loss', $entry['risk']['signals'] ?? [], true)),
             'idempotentHint' => $readonly,
             'openWorldHint' => false,
         ];
+    }
+
+    /**
+     * Human-readable title for a native function, e.g. "core_course_get_contents" becomes "Course: get contents".
+     *
+     * @param string $name Function name.
+     * @return string
+     */
+    private static function native_title(string $name): string {
+        $parts = explode('_', preg_replace('/^(core|mod|tool|local|block|report|qbank|gradereport)_/', '', $name));
+        $area = array_shift($parts);
+
+        return ucfirst((string)$area) . ($parts === [] ? '' : ': ' . implode(' ', $parts));
     }
 
     /**

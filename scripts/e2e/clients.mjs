@@ -136,6 +136,24 @@ async function files() {
   });
 }
 
+// Every tool, called once with empty arguments over real HTTP (cold requests): validation errors are fine, but a PHP
+// fatal (masked as "Internal error") means a missing library include that PHPUnit's preloading hides.
+async function coldcalls() {
+  const client = await connect('v2', 'auto', 'admin');
+  const tools = (await client.listTools()).tools;
+  const fatal = [];
+  for (const tool of tools) {
+    const r = await client.callTool({ name: tool.name, arguments: {} }).catch((e) => ({ isError: true, content: [{ text: e.message }] }));
+    if (/Internal error/i.test(r.content?.[0]?.text ?? '')) fatal.push(tool.name);
+  }
+  for (const [name, args] of [['backup_status', { backupid: 'nosuchbackup' }], ['backup_status', { backupid: 'export1' }]]) {
+    const r = await client.callTool({ name, arguments: args });
+    if (/Internal error/i.test(r.content?.[0]?.text ?? '')) fatal.push(`${name}(${args.backupid})`);
+  }
+  check(`[cold] ${tools.length} tools called with empty args, no PHP fatals`, fatal.length === 0, fatal.join(', '));
+  await client.close();
+}
+
 async function raw() {
   const base = URL_.href;
   const card = await fetch(`${base}/server-card`);
@@ -176,6 +194,7 @@ for (const [sdk, mode] of [['v1', 'legacy'], ['v2', 'legacy'], ['v2', 'auto'], [
   await surfaces(sdk, mode);
 }
 await files();
+await attempt('[cold] all tools', coldcalls);
 await attempt('[http] raw checks', raw);
 
 console.log(failures === 0 ? '\nALL LIVE CHECKS PASSED' : `\n${failures} LIVE CHECK(S) FAILED`);

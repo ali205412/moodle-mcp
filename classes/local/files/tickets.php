@@ -39,6 +39,9 @@ class tickets {
     /** Download a single file. */
     public const KIND_FILE = 'file';
 
+    /** Short link table: random id => signed ticket. */
+    private const LINKS = 'webservice_mcp_link';
+
     /** Download one of the user's finished export zips (by stored file id). */
     public const KIND_EXPORT = 'export';
 
@@ -54,10 +57,7 @@ class tickets {
         self::require_service_flag($ctx->serviceid, 'downloadfiles');
         $ttl = limits::ttl('downloadticketttl', $ttl);
         $ticket = signer::sign('dl', self::base_claims($ctx) + $claims, $ttl);
-        return [
-            'url' => (new moodle_url('/webservice/mcp/pluginfile.php', ['ticket' => $ticket]))->out(false),
-            'expires' => time() + $ttl,
-        ];
+        return ['url' => self::short_url('/webservice/mcp/pluginfile.php', $ticket, $ttl), 'expires' => time() + $ttl];
     }
 
     /**
@@ -72,10 +72,60 @@ class tickets {
         self::require_service_flag($ctx->serviceid, 'uploadfiles');
         $ttl = limits::ttl('uploadticketttl', $ttl);
         $ticket = signer::sign('ul', self::base_claims($ctx) + $claims, $ttl);
-        return [
-            'url' => (new moodle_url('/webservice/mcp/upload.php', ['ticket' => $ticket]))->out(false),
-            'expires' => time() + $ttl,
-        ];
+        return ['url' => self::short_url('/webservice/mcp/upload.php', $ticket, $ttl), 'expires' => time() + $ttl];
+    }
+
+    /**
+     * The signed ticket of the current request: from a short link (t) or, for older links, the ticket itself.
+     *
+     * @param string $purpose dl or ul.
+     * @return string Signed ticket, or '' when none was given or the short link is unknown or expired.
+     */
+    public static function from_request(string $purpose): string {
+        $linkid = optional_param('t', '', PARAM_ALPHANUM);
+        if ($linkid !== '') {
+            return self::lookup($purpose, $linkid);
+        }
+        return optional_param('ticket', '', PARAM_RAW_TRIMMED);
+    }
+
+    /**
+     * The signed ticket behind a short link id.
+     *
+     * The row only maps the id to the ticket; redeem() still verifies the ticket's signature and expiry.
+     *
+     * @param string $purpose dl or ul.
+     * @param string $linkid Short link id.
+     * @return string Signed ticket, or '' when unknown or expired.
+     */
+    public static function lookup(string $purpose, string $linkid): string {
+        global $DB;
+
+        $payload = $DB->get_field_select(
+            self::LINKS,
+            'payload',
+            'linkid = :linkid AND expiresat >= :now',
+            ['linkid' => $linkid, 'now' => time()]
+        );
+        // A link for the other purpose (an upload link on the download endpoint) resolves to nothing.
+        return $payload !== false && signer::verify($purpose, (string)$payload) !== null ? (string)$payload : '';
+    }
+
+    /**
+     * Store a ticket under a random short id and return the short URL (long tickets break some clients' link readers).
+     *
+     * @param string $script Endpoint path.
+     * @param string $ticket Signed ticket.
+     * @param int $ttl Lifetime in seconds.
+     * @return string
+     */
+    private static function short_url(string $script, string $ticket, int $ttl): string {
+        global $DB, $USER;
+
+        $linkid = bin2hex(random_bytes(16));
+        $DB->insert_record(self::LINKS, ['linkid' => $linkid, 'userid' => (int)$USER->id, 'payload' => $ticket,
+            'expiresat' => time() + $ttl, 'timecreated' => time()]);
+        return (new moodle_url($script, ['t' => $linkid]))->out(false);
     }
 
     /**

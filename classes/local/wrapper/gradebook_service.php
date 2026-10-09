@@ -121,7 +121,7 @@ class gradebook_service {
      */
     public function update_category(int $courseid, int $categoryid, array $payload): array {
         $this->require_gradelib();
-        require_once($this->dirroot() . '/grade/edit/tree/lib.php');
+        moodle_lib::load('grade/edit/tree/lib.php');
 
         $coursecontext = $this->course_context($courseid);
         external_api::validate_context($coursecontext);
@@ -559,16 +559,6 @@ class gradebook_service {
      * @return void
      */
     private function require_gradelib(): void {
-        require_once($this->dirroot() . '/lib/gradelib.php');
-    }
-
-    /**
-     * Return Moodle dirroot.
-     *
-     * @return string
-     */
-    private function dirroot(): string {
-        global $CFG;
-        return $CFG->dirroot;
+        moodle_lib::load('lib/gradelib.php');
     }
 }

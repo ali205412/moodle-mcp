@@ -74,7 +74,7 @@ class export_service {
         locator::check_restriction($context, $ctx->restrictedcontext);
         external_api::validate_context($context);
         self::check_course_content($context);
-        return $this->queue(self::KIND_COURSE, ['courseid' => (int)$context->instanceid], $ctx);
+        return $this->queue(self::KIND_COURSE, ['courseid' => (int)$context->instanceid], $ctx, !empty($args['refresh']));
     }
 
     /**
@@ -92,7 +92,7 @@ class export_service {
         external_api::validate_context($context);
         $groupid = (int)($args['groupid'] ?? 0);
         self::check_assign($cmid, $groupid);
-        return $this->queue(self::KIND_ASSIGN, ['cmid' => $cmid, 'groupid' => $groupid], $ctx);
+        return $this->queue(self::KIND_ASSIGN, ['cmid' => $cmid, 'groupid' => $groupid], $ctx, !empty($args['refresh']));
     }
 
     /**
@@ -109,7 +109,7 @@ class export_service {
         $usercontext = context_user::instance($USER->id);
         $state = $exportid ? self::read_state((int)$usercontext->id, $exportid) : null;
         if ($state === null) {
-            throw new moodle_exception('invalidparameter', 'debug', '', null, 'No export with that id belongs to you.');
+            throw new transfer_exception(400, 'invalidparameter', 'No export with that id belongs to you.');
         }
         $result = ['backupid' => $handle, 'operation' => 'export', 'type' => $state['kind'], 'state' => $state['state'],
             'timecreated' => $state['created'], 'expires' => $state['created'] + self::LIFETIME];
@@ -277,7 +277,7 @@ class export_service {
     public static function group_userids($cm, int $groupid): array {
         $group = groups_get_group($groupid, 'id, courseid', MUST_EXIST);
         if ((int)$group->courseid !== (int)$cm->course) {
-            throw new moodle_exception('invalidparameter', 'debug', '', null, 'The group is not in this course.');
+            throw new transfer_exception(400, 'invalidparameter', 'The group is not in this course.');
         }
         $context = context_module::instance($cm->id);
         if (groups_get_activity_groupmode($cm) == SEPARATEGROUPS && !groups_is_member($groupid)) {
@@ -293,18 +293,28 @@ class export_service {
      * @param string $kind Export kind.
      * @param array $params Kind parameters.
      * @param call_context $ctx Request context.
+     * @param bool $refresh Build a new export even if an identical one exists.
      * @return array Tool result.
      */
-    private function queue(string $kind, array $params, call_context $ctx): array {
+    private function queue(string $kind, array $params, call_context $ctx, bool $refresh): array {
         global $USER;
 
         // The finished zip is only useful through a download link, which needs the service's download flag.
         tickets::require_service_flag($ctx->serviceid, 'downloadfiles');
         $usercontextid = (int)context_user::instance($USER->id)->id;
+        // Idempotent: the same request again returns the export already queued, running or finished (until it expires).
+        if (!$refresh && ($existing = self::find_existing($usercontextid, $kind, $params)) !== null) {
+            $result = $this->status(self::HANDLE_PREFIX . $existing, $ctx);
+            $result['reused'] = true;
+            $result['next'] = trim(($result['next'] ?? '') . ' This export was already requested; pass refresh=true to '
+                . 'build a new one.');
+            return $result;
+        }
         do {
             $exportid = random_int(1, 2147483647);
         } while (self::read_state($usercontextid, $exportid) !== null);
-        self::write_state($usercontextid, $exportid, ['state' => 'queued', 'kind' => $kind, 'created' => time()]);
+        self::write_state($usercontextid, $exportid, ['state' => 'queued', 'kind' => $kind, 'params' => $params,
+            'created' => time()]);
 
         $task = new export_task();
         $task->set_custom_data(['exportid' => $exportid, 'params' => $params,
@@ -318,6 +328,30 @@ class export_service {
             'next' => 'The zip is built in the background on the next cron run. Poll backup_status with this backupid; '
                 . 'when finished it returns a download link. Exports are deleted after 24 hours.',
         ];
+    }
+
+    /**
+     * The newest unexpired, not failed export of the same kind and parameters by this user.
+     *
+     * @param int $usercontextid User context id.
+     * @param string $kind Export kind.
+     * @param array $params Kind parameters.
+     * @return int|null Export id.
+     */
+    private static function find_existing(int $usercontextid, string $kind, array $params): ?int {
+        $files = get_file_storage()->get_area_files($usercontextid, self::COMPONENT, self::STATEAREA, false, 'itemid', false);
+        $best = null;
+        foreach ($files as $file) {
+            $state = json_decode($file->get_content(), true);
+            if (
+                is_array($state) && ($state['kind'] ?? '') === $kind && ($state['params'] ?? null) == $params
+                    && ($state['state'] ?? '') !== 'failed' && (int)$state['created'] > time() - self::LIFETIME
+                    && ($best === null || [(int)$state['created'], (int)$file->get_id()] > [$best[1], $best[2]])
+            ) {
+                $best = [(int)$file->get_itemid(), (int)$state['created'], (int)$file->get_id()];
+            }
+        }
+        return $best[0] ?? null;
     }
 
     /**

@@ -53,6 +53,7 @@ class provider implements
         'webservice_mcp_memory',
         'webservice_mcp_preapproval',
         'webservice_mcp_task',
+        'webservice_mcp_link',
     ];
 
     /** Tables that record the user as the administrator who issued something to someone else. */
@@ -95,6 +96,11 @@ class provider implements
             'scope' => 'privacy:metadata:preapproval:scope',
             'timecreated' => 'privacy:metadata:preapproval:timecreated',
         ], 'privacy:metadata:preapproval');
+        $collection->add_database_table('webservice_mcp_link', [
+            'userid' => 'privacy:metadata:link:userid',
+            'expiresat' => 'privacy:metadata:link:expiresat',
+            'timecreated' => 'privacy:metadata:link:timecreated',
+        ], 'privacy:metadata:link');
         $collection->add_database_table('webservice_mcp_memory', [
             'userid' => 'privacy:metadata:memory:userid',
             'content' => 'privacy:metadata:memory:content',
@@ -220,6 +226,17 @@ class provider implements
                     'result' => $record->result,
                     'timecreated' => transform::datetime($record->timecreated),
                 ], $tasks)),
+            ]);
+        }
+
+        // Links are exported without their payload: it is a bearer credential, not personal data.
+        $links = $DB->get_records('webservice_mcp_link', ['userid' => $userid], 'timecreated ASC', 'id, timecreated, expiresat');
+        if ($links) {
+            $writer->export_data(array_merge($base, [get_string('privacy:path:links', 'webservice_mcp')]), (object)[
+                'links' => array_values(array_map(static fn($record): array => [
+                    'timecreated' => transform::datetime($record->timecreated),
+                    'expiresat' => transform::datetime($record->expiresat),
+                ], $links)),
             ]);
         }
 

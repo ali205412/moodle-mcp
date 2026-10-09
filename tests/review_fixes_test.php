@@ -356,4 +356,58 @@ final class review_fixes_test extends advanced_testcase {
         $this->assertFalse(isset($page->settings->webservice_mcpshowhighrisktools));
         $this->assertFalse(get_string_manager()->string_exists('settings:showhighrisktools', 'webservice_mcp'));
     }
+
+    /**
+     * Upgrade step 2026101008 on top of 2026101007 data: adds webservice_mcp_link without touching existing rows;
+     * cleanup purges expired links; privacy and user deletion cover them.
+     */
+    public function test_link_table_upgrade_cleanup_and_privacy(): void {
+        global $CFG, $DB;
+        require_once($CFG->libdir . '/upgradelib.php');
+        require_once($CFG->dirroot . '/webservice/mcp/db/upgrade.php');
+
+        $this->resetAfterTest(true);
+        $user = $this->create_mcp_user();
+        $keys = (new admin_key_service())->issue([(int)$user->id], ['label' => 'Before 101008'], get_admin());
+
+        // Put the site back to 2026101007, as production is.
+        $dbman = $DB->get_manager();
+        $dbman->drop_table(new \xmldb_table('webservice_mcp_link'));
+        set_config('version', 2026101007, 'webservice_mcp');
+
+        $this->assertTrue(xmldb_webservice_mcp_upgrade(2026101007));
+        $this->assertTrue($dbman->table_exists('webservice_mcp_link'));
+        $this->assertSame('2026101008', (string)get_config('webservice_mcp', 'version'));
+        $this->assertNotNull((new credential_manager())->resolve_credential($keys[0]->token), 'Existing keys survive.');
+        $this->assertSame(1, (new admin_key_service())->count_keys(['label' => 'Before 101008']));
+
+        $link = fn(string $linkid, int $expiresat) => $DB->insert_record('webservice_mcp_link', (object)[
+            'linkid' => $linkid,
+            'payload' => 'signed.ticket.' . $linkid,
+            'userid' => $user->id,
+            'expiresat' => $expiresat,
+            'timecreated' => time(),
+        ]);
+        $link(str_repeat('a', 32), time() - 1);
+        $link(str_repeat('b', 32), time() + HOURSECS);
+        try {
+            $link(str_repeat('b', 32), time() + HOURSECS);
+            $this->fail('linkid must be unique.');
+        } catch (\dml_write_exception $exception) {
+            $this->assertSame(2, $DB->count_records('webservice_mcp_link'));
+        }
+
+        (new task\cleanup())->execute();
+        $this->assertSame([str_repeat('b', 32)], array_values($DB->get_fieldset_select('webservice_mcp_link', 'linkid', '1 = 1')));
+
+        $system = context_system::instance();
+        $this->assertContains((int)$system->id, array_map(
+            'intval',
+            \webservice_mcp\privacy\provider::get_contexts_for_userid((int)$user->id)->get_contextids()
+        ));
+        \webservice_mcp\privacy\provider::delete_data_for_user(
+            new \core_privacy\local\request\approved_contextlist($user, 'webservice_mcp', [$system->id])
+        );
+        $this->assertSame(0, $DB->count_records('webservice_mcp_link', ['userid' => $user->id]));
+    }
 }

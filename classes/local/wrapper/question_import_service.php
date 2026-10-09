@@ -50,20 +50,17 @@ class question_import_service {
         bool $contextfromfile = false
     ): array {
         global $SITE;
-        require_once($this->dirroot() . '/lib/questionlib.php');
-        require_once($this->dirroot() . '/lib/filelib.php');
-        require_once($this->dirroot() . '/question/format.php');
+        moodle_lib::load('lib/questionlib.php');
+        moodle_lib::load('lib/filelib.php');
+        moodle_lib::load('question/format.php');
 
         $format = strtolower(trim($format));
         if (!in_array($format, ['gift', 'xml'], true)) {
             throw new \moodle_exception('invalidparameter');
         }
 
-        $formatfile = $this->dirroot() . '/question/format/' . $format . '/format.php';
-        if (!is_readable($formatfile)) {
-            throw new \moodle_exception('invalidparameter');
-        }
-        require_once($formatfile);
+        // The format is whitelisted above, so the path is fixed.
+        moodle_lib::load('question/format/' . $format . '/format.php');
 
         $classname = 'qformat_' . $format;
         if (!class_exists($classname)) {
@@ -132,15 +129,5 @@ class question_import_service {
     private function get_category(int $categoryid): stdClass {
         global $DB;
         return $DB->get_record('question_categories', ['id' => $categoryid], '*', MUST_EXIST);
-    }
-
-    /**
-     * Return Moodle dirroot.
-     *
-     * @return string
-     */
-    private function dirroot(): string {
-        global $CFG;
-        return $CFG->dirroot;
     }
 }

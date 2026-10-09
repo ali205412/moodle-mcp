@@ -78,6 +78,7 @@ class observer {
         $DB->delete_records('webservice_mcp_credential', ['userid' => $event->objectid]);
         $DB->delete_records('webservice_mcp_oauth_code', ['userid' => $event->objectid]);
         $DB->delete_records('webservice_mcp_preapproval', ['userid' => $event->objectid]);
+        $DB->delete_records('webservice_mcp_link', ['userid' => $event->objectid]);
     }
 
     /**

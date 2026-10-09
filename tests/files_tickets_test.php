@@ -94,7 +94,7 @@ final class files_tickets_test extends advanced_testcase {
      */
     private function ticket(string $url): string {
         parse_str((string)parse_url($url, PHP_URL_QUERY), $query);
-        return $query['ticket'];
+        return isset($query['t']) ? (tickets::lookup('dl', $query['t']) ?: tickets::lookup('ul', $query['t'])) : $query['ticket'];
     }
 
     /**
@@ -128,6 +128,35 @@ final class files_tickets_test extends advanced_testcase {
     }
 
     /**
+     * Links are short ids mapped to the signed ticket; old ?ticket= links still work.
+     */
+    public function test_short_links(): void {
+        global $DB;
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+        $link = tickets::download_url($this->ctx($user), ['k' => tickets::KIND_FILE, 'rp' => '/1/a/b/0/c']);
+        $this->assertMatchesRegularExpression('~/webservice/mcp/pluginfile\.php\?t=[0-9a-f]{32}$~', $link['url']);
+        $this->assertLessThan(120, strlen($link['url']));
+
+        parse_str((string)parse_url($link['url'], PHP_URL_QUERY), $query);
+        $ticket = tickets::lookup('dl', $query['t']);
+        $this->assertSame((int)$user->id, (int)tickets::redeem('dl', $ticket)['user']->id);
+        $this->assertSame('', tickets::lookup('ul', $query['t']));
+        $this->assertSame('', tickets::lookup('dl', str_repeat('0', 32)));
+
+        // The endpoint reads t, or ticket for links issued before short links.
+        $_GET = ['t' => $query['t']];
+        $this->assertSame($ticket, tickets::from_request('dl'));
+        $_GET = ['ticket' => $ticket];
+        $this->assertSame($ticket, tickets::from_request('dl'));
+        $_GET = [];
+
+        // Expired rows stop resolving (the cleanup task deletes them).
+        $DB->set_field('webservice_mcp_link', 'expiresat', time() - 1, ['linkid' => $query['t']]);
+        $this->assertSame('', tickets::lookup('dl', $query['t']));
+    }
+
+    /**
      * Download ticket round trip binds user and path.
      */
     public function test_download_ticket_round_trip_binds_user_and_path(): void {
@@ -135,7 +164,7 @@ final class files_tickets_test extends advanced_testcase {
         $this->setUser($user);
         $link = tickets::download_url($this->ctx($user), ['k' => tickets::KIND_FILE, 'rp' => '/5/user/private/0/a.txt']);
 
-        $this->assertStringContainsString('/webservice/mcp/pluginfile.php?ticket=', $link['url']);
+        $this->assertStringContainsString('/webservice/mcp/pluginfile.php?t=', $link['url']);
         $this->assertGreaterThan(time(), $link['expires']);
         $redeemed = tickets::redeem('dl', $this->ticket($link['url']));
         $this->assertSame((int)$user->id, (int)$redeemed['user']->id);

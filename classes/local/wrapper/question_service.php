@@ -52,8 +52,8 @@ class question_service {
      */
     public function move_questions(array $questionids, int $targetcategoryid): array {
         global $DB;
-        require_once($this->dirroot() . '/lib/questionlib.php');
-        require_once($this->dirroot() . '/lib/filelib.php');
+        moodle_lib::load('lib/questionlib.php');
+        moodle_lib::load('lib/filelib.php');
 
         $questionids = arguments::ids($questionids);
         if ($questionids === []) {
@@ -88,8 +88,8 @@ class question_service {
      */
     public function delete_questions(array $questionids): array {
         global $DB;
-        require_once($this->dirroot() . '/lib/questionlib.php');
-        require_once($this->dirroot() . '/lib/filelib.php');
+        moodle_lib::load('lib/questionlib.php');
+        moodle_lib::load('lib/filelib.php');
 
         $questionids = arguments::ids($questionids);
         if ($questionids === []) {
@@ -159,8 +159,8 @@ class question_service {
      * @return array
      */
     public function create_question(int $categoryid, array $payload): array {
-        require_once($this->dirroot() . '/lib/questionlib.php');
-        require_once($this->dirroot() . '/lib/filelib.php');
+        moodle_lib::load('lib/questionlib.php');
+        moodle_lib::load('lib/filelib.php');
         $category = $this->get_category($categoryid);
         $context = context::instance_by_id((int)$category->contextid, MUST_EXIST);
         external_api::validate_context($context);
@@ -188,8 +188,8 @@ class question_service {
      * @return array
      */
     public function update_question(int $questionid, array $payload): array {
-        require_once($this->dirroot() . '/lib/questionlib.php');
-        require_once($this->dirroot() . '/lib/filelib.php');
+        moodle_lib::load('lib/questionlib.php');
+        moodle_lib::load('lib/filelib.php');
         $question = question_bank::load_question($questionid);
         if (!\question_has_capability_on($question, 'edit')) {
             $context = context::instance_by_id((int)$question->contextid, MUST_EXIST);
@@ -220,8 +220,8 @@ class question_service {
      * @return array
      */
     public function preview_question(int $questionid): array {
-        require_once($this->dirroot() . '/lib/questionlib.php');
-        require_once($this->dirroot() . '/lib/filelib.php');
+        moodle_lib::load('lib/questionlib.php');
+        moodle_lib::load('lib/filelib.php');
         if (!class_exists('\qbank_previewquestion\helper')) {
             throw new \moodle_exception('invalidparameter');
         }
@@ -265,8 +265,8 @@ class question_service {
      */
     private function question_result(int $questionid): array {
         global $DB;
-        require_once($this->dirroot() . '/lib/questionlib.php');
-        require_once($this->dirroot() . '/lib/filelib.php');
+        moodle_lib::load('lib/questionlib.php');
+        moodle_lib::load('lib/filelib.php');
 
         $question = question_bank::load_question_data($questionid);
         $entry = \get_question_bank_entry($questionid);
@@ -294,15 +294,5 @@ class question_service {
     private function get_category(int $categoryid): stdClass {
         global $DB;
         return $DB->get_record('question_categories', ['id' => $categoryid], '*', MUST_EXIST);
-    }
-
-    /**
-     * Return Moodle dirroot.
-     *
-     * @return string
-     */
-    private function dirroot(): string {
-        global $CFG;
-        return $CFG->dirroot;
     }
 }
