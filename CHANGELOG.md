@@ -1,6 +1,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Version 0.9.3 (2026101009)
+- Page images of Office files: retry a conversion that core cached as failed (e.g. one attempted before the
+  converter worked) instead of returning the stale failure; clearer conversion error messages
+
 ## Version 0.9.2 (2026101008)
 - `file_read` returns real content: text from docx, pptx (slides + speaker notes), xlsx, odt/odp/ods, rtf and html in
   pure PHP; PDF text via pdftotext; `render: "images"` turns PDF and Office pages into PNG images (Ghostscript or

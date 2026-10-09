@@ -680,6 +680,10 @@ class file_reader {
                 . 'the text of PDF and Office files, and render="images" shows PDF pages.'));
         }
         $conversion = $converter->start_conversion($source['file'], $format);
+        if ($conversion->get('status') == \core_files\conversion::STATUS_FAILED) {
+            // Core caches failed conversions forever; retry once, e.g. after the converter was installed or fixed.
+            $conversion = $converter->start_conversion($source['file'], $format, true);
+        }
         for ($i = 0; $i < self::CONVERSION_WAIT && $conversion->get('status') != \core_files\conversion::STATUS_COMPLETE; $i++) {
             if ($conversion->get('status') == \core_files\conversion::STATUS_FAILED) {
                 break;
@@ -689,8 +693,10 @@ class file_reader {
         }
         $dest = $conversion->get('status') == \core_files\conversion::STATUS_COMPLETE ? $conversion->get_destfile() : null;
         if (!$dest) {
-            throw new transfer_exception(422, 'conversionfailed', "The document converter did not produce {$format} in time "
-                . 'or failed; try again later.');
+            $failed = $conversion->get('status') == \core_files\conversion::STATUS_FAILED;
+            throw new transfer_exception(422, 'conversionfailed', $failed
+                ? "The document converter could not turn this file into {$format}. file_read without render still returns its text."
+                : "The document converter is still producing {$format}; try again in a minute.");
         }
         $converted = $this->source(
             $source['target'],
