@@ -14,7 +14,8 @@ Nothing committed. All files pass `php -l`; my files pass phpcs (moodle standard
   - `tickets.php`: sign/redeem `dl`/`ul` tickets; service flag checks.
   - `endpoint.php`: CORS (transport origin allowlist), login, JSON errors and status mapping.
   - `download_handler.php`, `upload_handler.php`: endpoint logic, unit-testable.
-  - `backup_service.php`, `export_service.php`, `limits.php`, `transfer_exception.php`.
+  - `backup_service.php`, `limits.php`, `transfer_exception.php`.
+  - `export_service.php`, `export_task.php` (adhoc task), `assign_export_downloader.php` (exposes `\mod_assign\downloader`'s file list): asynchronous exports.
 - `pluginfile.php`, `upload.php`: endpoint scripts (`AJAX_SCRIPT`, `NO_MOODLE_COOKIES`, `NO_DEBUG_DISPLAY`).
 - `tests/files_access_test.php`, `files_upload_test.php`, `files_tickets_test.php`, `files_backup_test.php`, `files_locator_test.php`, and the fixture `tests/fixtures/files_antivirus_scanner.php` (offline antivirus double).
 - Appended only: a Files block at the end of `settings.php`, strings at the end of `lang/en/webservice_mcp.php`, and a "Files" section in `README.md` (including the nginx X-Accel-Redirect recipe).
@@ -45,11 +46,26 @@ Nothing committed. All files pass `php -l`; my files pass phpcs (moodle standard
 | file_save_draft | Target must be `file_browser` is_writable. Default target is user/private. `merge` uses `file_merge_files_from_draft_area_into_filearea`; `replace` uses `file_save_draft_area_files`. Private files require `moodle/user:manageownfiles` and check the userquota like `core_user_add_user_private_files`. |
 | file_delete | Needs `file_browser` is_writable. Refuses area roots and non-empty folders. |
 | file_set_course_image | Requires `moodle/course:update`. Checks `course_overviewfiles_options` types and count, then purges the `course_image` cache. |
-| export_course_content | Checks `\core\content::can_export_context` now; the link streams the zip via `zipwriter::get_stream_writer`. |
-| export_assignment_submissions | Checks `require_view_grades` now; `groupid` is validated against separate-groups rules. The link streams `\mod_assign\downloader`. |
+| export_course_content | Checks course access and `\core\content::can_export_context`, then queues an `export_task` (adhoc, as the user). Returns `{backupid: "export<id>", state: "queued"}`. Cron re-checks the same permissions and the token's context restriction, builds the zip with `zipwriter::get_file_writer` and stores it in the user's context (`webservice_mcp/exports`, itemid = export id). |
+| export_assignment_submissions | Checks cm visibility, course access and `require_view_grades` (plus separate-groups rules for `groupid`), then queues an `export_task`. Cron re-checks all of these and writes the same files `\mod_assign\downloader` would select into a zip (`core_files\archive_writer` file mode), triggering `all_submissions_downloaded`. |
 | backup_create | Takes one of `courseid`, `sectionid`, `cmid`, plus `include_users` and `anonymize` (each needs its capability; settings locked by config are refused). Builds a backup_controller with INTERACTIVE_YES and MODE_ASYNC, then finish_ui, then queues `asynchronous_backup_task` as the user. The backupid is embedded in the filename so the file can be found later. |
 | backup_status | Owner only. Reports state queued, running, finished or failed, plus progress. A finished backup returns the .mbz `uri` and a download link; a finished restore returns `courseid` and `courseurl`. |
 | restore_from_draft | Source is `draftitemid` (with `filename` if needed) or `uri`. `target` is new_course (`categoryid`, which needs `moodle/course:create`), existing_add or existing_delete (`courseid`). Needs `moodle/restore:restorecourse`, plus `moodle/restore:uploadfile` for draft sources and `moodle/restore:userinfo` if `include_users`. Extract, restore_controller (ASYNC, convert if needed), finish_ui, execute_precheck, queue `asynchronous_restore_task`. On precheck errors the skeleton course and temp files are cleaned up. |
+
+## Asynchronous exports
+
+- **Queue:** the export tools check permissions, write `state.json` (`webservice_mcp/exportstate`, itemid = export id, in the user's context) with state `queued`, and queue `\webservice_mcp\local\files\export_task` with `set_userid` = the user. They return `{backupid: "export<id>", state: "queued"}`.
+- **Status:** `backup_status` with `backupid="export<id>"` reports `queued`, `running`, `finished` (plus `file{filename,size,uri,download{url,expires},curl}`) or `failed` (plus `error`). The state is read from the caller's own user context, so other users get "No export with that id belongs to you".
+- **Build (cron):**
+  - re-checks the token context restriction captured at queue time;
+  - re-checks course access and `can_export_context`, or cm visibility, `require_view_grades` and group rules;
+  - builds the zip into a request directory and stores it;
+  - records `finished`, or `failed` with the message; the task never throws, so it never retries.
+  - A purged export whose task runs later does nothing.
+- **Purge:** `export_service::purge(?int $now = null): int` deletes exports whose `state.json` was created more than 24 hours ago (the state keeps its original `timecreated`).
+- **MCP Tasks:** the export tools are not in `tasks.php` LONG_RUNNING. A legacy client that opts in with `params.task` gets the (fast) queueing call run by `run_tool` in cron, which queues exactly one export, so nothing is queued twice.
+- **Reading:** `file_read` and `file_get_download_url` accept the export uri for its owner (read straight from storage; links use the `export` ticket kind). The context-restriction check exempts the owner's own export area, as it does drafts.
+- `file_read` and download links still require the service's `downloadfiles` flag; the export tools check it at queue time.
 
 ## Endpoints
 
@@ -58,7 +74,7 @@ Nothing committed. All files pass `php -l`; my files pass phpcs (moodle standard
 - The ticket kind is `file`, `course_content` or `assign_all`.
 - Files are served by `file_pluginfile()`, which gives Range, ETag/304 and X-Sendfile. The user's own drafts go through `send_stored_file()` after a `file_browser` check and are **always** sent as attachments (as core `draftfile.php`); `forcedownload=false` is only honoured for areas whose `file_pluginfile()` callbacks decide.
 - Every response from `serve()` carries `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`.
-- Exports are streamed with `X-Accel-Buffering: no`.
+- Ticket kind `export` (claim `fid`) serves a finished export zip with `send_stored_file(..., forcedownload)`, only if the stored file is in the ticket user's own `webservice_mcp/exports` area; otherwise 404. Nothing is generated while streaming, so X-Accel-Redirect applies to exports too.
 
 ### `/webservice/mcp/upload.php?ticket=…[&filename=][&overwrite=1]`
 - PUT or POST with a raw body, streamed to disk in 1 MB chunks; 413 over the limit.
@@ -129,8 +145,9 @@ Success on the download endpoint is the file itself: 200, 206 for Range requests
 ## Tests
 
 - New: 5 test files with 37 test methods (I didn't count assertions separately).
-- Moodle 4.2, MariaDB 10.11, after the review fixes and the upload-limit correction: `OK (285 tests, 1784 assertions)`.
-- Moodle 4.5, MariaDB 10.11, after the review fixes and the upload-limit correction: `OK (285 tests, 1787 assertions)`.
+- Moodle 4.2.11 / MariaDB 10.11, with asynchronous exports: `OK (293 tests, 1823 assertions)`.
+- Moodle 4.5.15 / PostgreSQL (isolated compose project `filesx`), with asynchronous exports: `OK (293 tests, 1826 assertions)`.
+- Export regression tests (`tests/files_export_test.php`): builds in cron (assignment and course content), permission re-check at build time (failed status), owner isolation (status, read, download), purge (and a purged queued export builds nothing), up-front permission checks.
 - No test does outbound HTTP:
   - The antivirus test uses the offline scanner double `antivirus_mcpfilestest`, whose incident report skips the geoplugin lookup.
   - The loopback fallback is gone, so no file test mocks or makes HTTP requests.
@@ -147,7 +164,7 @@ Success on the download endpoint is the file itself: 200, 206 for Range requests
 ## Limitations
 
 - **No inline read for some areas:** areas neither `file_browser` nor an activity's export listing covers (blocks, question, grading areas) return a download link from `file_read` rather than content, because `file_pluginfile()` ends the request and cannot run in-process.
-- **Exports hold a worker** for the whole download, because the zip is built while it streams.
+- **Exports wait for cron.** The export tools return immediately and cron builds the zip; status and download come from `backup_status`. Exports (zips and state) are deleted after 24 hours by `export_service::purge()`; I asked auth-fixer to call it from `classes/task/cleanup.php`.
 - **Multipart uploads are capped by php.ini**; use PUT for big files.
 - **Backups and restores need cron** to run their adhoc tasks.
 - **Endpoints not tested over real HTTP:** there is no local web server. The endpoint logic is unit-tested directly; the PHP scripts are thin wrappers.
@@ -173,5 +190,5 @@ location /dataroot/ {
 With this in place, `file_pluginfile()` / `send_stored_file()` emit `X-Accel-Redirect`, and the worker is released immediately.
 
 - **Uploads:** nginx buffers request bodies to disk before PHP runs (default `fastcgi_request_buffering on`), so slow uploads don't hold workers. Keep `client_max_body_size` (16G now) at least as large as the biggest upload allowed. For chunked uploads, each chunk must fit under it.
-- **Exports:** course content and assignment zips are generated as they stream, so they cannot use X-Accel and hold a worker for the whole download. The endpoint sends `X-Accel-Buffering: no` so nginx streams them instead of buffering.
+- **Exports:** course content and assignment zips are built by cron into stored files, so their downloads use X-Accel-Redirect like any other file and hold no worker.
 

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<XMLDB PATH="webservice/mcp/db" VERSION="2026101006" COMMENT="XMLDB file for Moodle webservice_mcp"
+<XMLDB PATH="webservice/mcp/db" VERSION="2026101007" COMMENT="XMLDB file for Moodle webservice_mcp"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
 >
@@ -28,6 +28,7 @@
         <FIELD NAME="familycreated" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="When the OAuth token family was first granted."/>
         <FIELD NAME="issuerid" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="Administrator who issued this key for the user, for admin-issued keys."/>
         <FIELD NAME="rotatedat" TYPE="int" LENGTH="10" NOTNULL="false" SEQUENCE="false" COMMENT="When this refresh token was rotated (replaced), for the reuse grace window."/>
+        <FIELD NAME="label" TYPE="char" LENGTH="255" NOTNULL="false" SEQUENCE="false" COMMENT="Administrator-chosen label of an admin-issued key."/>
       </FIELDS>
       <KEYS>
         <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
@@ -41,6 +42,7 @@
         <INDEX NAME="sid_idx" UNIQUE="false" FIELDS="sid"/>
         <INDEX NAME="oauthclientid_idx" UNIQUE="false" FIELDS="oauthclientid"/>
         <INDEX NAME="familyid_idx" UNIQUE="false" FIELDS="familyid"/>
+        <INDEX NAME="label_idx" UNIQUE="false" FIELDS="label"/>
         <INDEX NAME="service_ctx_idx" UNIQUE="false" FIELDS="serviceidentifier, contextid"/>
       </INDEXES>
     </TABLE>
@@ -220,6 +222,20 @@
       <INDEXES>
         <INDEX NAME="keyhash_uix" UNIQUE="true" FIELDS="keyhash"/>
         <INDEX NAME="expiresat_idx" UNIQUE="false" FIELDS="expiresat"/>
+      </INDEXES>
+    </TABLE>
+    <TABLE NAME="webservice_mcp_ratelimit" COMMENT="Sliding-window rate limit hits (one row per limited request), kept for an hour.">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="bucket" TYPE="char" LENGTH="64" NOTNULL="true" SEQUENCE="false" COMMENT="SHA-256 of the limited key, e.g. registration plus source IP."/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="bucket_time_idx" UNIQUE="false" FIELDS="bucket, timecreated"/>
+        <INDEX NAME="timecreated_idx" UNIQUE="false" FIELDS="timecreated"/>
       </INDEXES>
     </TABLE>
   </TABLES>

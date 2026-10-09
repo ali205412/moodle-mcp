@@ -68,7 +68,7 @@ class file_reader {
      *
      * @param string|null $uri moodle://file URI.
      * @param string|null $url On-site file URL.
-     * @return array{params:?array, relativepath:string, draft:bool, info:?\file_info}
+     * @return array{params:?array, relativepath:string, draft:bool, info:?\file_info, export:?stored_file}
      * @throws moodle_exception
      */
     public function resolve(?string $uri, ?string $url): array {
@@ -112,7 +112,10 @@ class file_reader {
         if ($info !== null && $info->is_directory()) {
             throw new moodle_exception('invalidparameter', 'debug', '', null, 'That is a folder; use file_list to browse it.');
         }
-        return ['params' => $params, 'relativepath' => $relativepath, 'draft' => $draft, 'info' => $info];
+        // The user's own finished exports are not in file_browser; they are read straight from storage.
+        $export = $info === null && $params !== null ? export_service::own_file($params) : null;
+        return ['params' => $params, 'relativepath' => $relativepath, 'draft' => $draft, 'info' => $info,
+            'export' => $export];
     }
 
     /**
@@ -124,6 +127,17 @@ class file_reader {
      * @throws moodle_exception
      */
     public function open(array $target, int $maxbytes): array {
+        if (!empty($target['export'])) {
+            $file = $target['export'];
+            return $this->source(
+                $target,
+                $file->get_filename(),
+                (string)$file->get_mimetype(),
+                (int)$file->get_filesize(),
+                $file,
+                null
+            );
+        }
         $info = $target['info'];
         if ($info !== null) {
             $file = locator::stored_file($info);
@@ -322,6 +336,9 @@ class file_reader {
      * @return array
      */
     public static function download_claims(array $target, bool $forcedownload = true, ?string $preview = null): array {
+        if (!empty($target['export'])) {
+            return ['k' => tickets::KIND_EXPORT, 'fid' => (int)$target['export']->get_id()];
+        }
         $relativepath = $target['relativepath'];
         if ($target['info'] !== null && ($url = $target['info']->get_url())) {
             // The file_info knows whether this area puts the item id in its URLs.

@@ -209,17 +209,19 @@ class tool_definitions {
             ],
             'export_course_content' => [
                 'title' => 'Export course content',
-                'description' => 'Get a download link for a zip of the course content you can see (Moodle\'s "Download course '
-                    . 'content"), when the site and course allow it. The zip is generated while downloading; save it with '
-                    . 'curl -fL -o course.zip "<url>".',
+                'description' => 'Build a zip of the course content you can see (Moodle\'s "Download course content"), when the '
+                    . 'site and course allow it. The zip is built in the background: poll backup_status with the returned '
+                    . 'backupid (export...) until it is finished, then download it with the returned link, e.g. '
+                    . 'curl -fL -o course.zip "<url>". Exports are deleted after 24 hours.',
                 'properties' => ['courseid' => $id('Course id.')],
                 'required' => ['courseid'],
             ],
             'export_assignment_submissions' => [
                 'title' => 'Download all assignment submissions',
-                'description' => 'Get a download link for a zip of all submission files of an assignment (graders only), '
-                    . 'optionally '
-                    . 'limited to one group. The zip is generated while downloading.',
+                'description' => 'Build a zip of all submission files of an assignment (graders only), optionally limited to '
+                    . 'one group, as Moodle\'s "Download all submissions". The zip is built in the background: poll '
+                    . 'backup_status with the returned backupid (export...), then download it with the returned link. '
+                    . 'Exports are deleted after 24 hours.',
                 'properties' => ['cmid' => $id('Assignment course module id.'), 'groupid' => $id('Optional group id.')],
                 'required' => ['cmid'],
             ],
@@ -239,10 +241,12 @@ class tool_definitions {
                 'oneof' => [['courseid', 'sectionid', 'cmid']],
             ],
             'backup_status' => [
-                'title' => 'Backup or restore status',
-                'description' => 'State and progress of a backup or restore you started. A finished backup returns the .mbz uri '
-                    . 'and a download link; a finished restore returns the course id.',
-                'properties' => ['backupid' => $str('backupid from backup_create or restoreid from restore_from_draft.', 64)],
+                'title' => 'Backup, restore or export status',
+                'description' => 'State and progress of a backup, restore or export you started. A finished backup returns '
+                    . 'the .mbz uri and a download link; a finished export returns the zip uri and a download link; a '
+                    . 'finished restore returns the course id. A failed one returns the reason.',
+                'properties' => ['backupid' => $str('backupid from backup_create, restoreid from restore_from_draft, or the '
+                    . 'backupid (export...) from export_course_content / export_assignment_submissions.', 64)],
                 'required' => ['backupid'],
             ],
             'restore_from_draft' => [

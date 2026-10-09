@@ -19,15 +19,14 @@ declare(strict_types=1);
 namespace webservice_mcp\local\files;
 
 use context;
-use context_course;
-use context_module;
-use core_external\external_api;
+use context_user;
 
 /**
- * Logic behind /webservice/mcp/pluginfile.php: redeem a download ticket and stream the file or export.
+ * Logic behind /webservice/mcp/pluginfile.php: redeem a download ticket and send the file.
  *
- * Single files are served by file_pluginfile() (or send_stored_file() for the user's own drafts), which
- * apply Moodle's full access rules plus ETag, Range and X-Sendfile handling. Exports stream zips.
+ * Files are served by file_pluginfile(), or by send_stored_file() for the user's own drafts and finished
+ * exports, which apply Moodle's access rules plus ETag, Range and X-Sendfile/X-Accel-Redirect handling, so
+ * the web worker is released while the web server sends the bytes. Nothing is generated while streaming.
  *
  * @package     webservice_mcp
  * @copyright   2026 Ali Abdelaal
@@ -72,13 +71,9 @@ class download_handler {
                 }
                 locator::check_restriction($context, $redeemed['restriction'], $segments[1], $segments[2]);
                 break;
-            case tickets::KIND_COURSE_CONTENT:
-                $context = context_course::instance((int)($claims['courseid'] ?? 0));
-                locator::check_restriction($context, $redeemed['restriction']);
-                break;
-            case tickets::KIND_ASSIGN_ALL:
-                $context = context_module::instance((int)($claims['cmid'] ?? 0));
-                locator::check_restriction($context, $redeemed['restriction']);
+            case tickets::KIND_EXPORT:
+                // Exports live in the user's own context; their sources were checked against the restriction.
+                $context = context_user::instance((int)$redeemed['user']->id);
                 break;
             default:
                 throw new transfer_exception(401, 'invalidticket', 'Unknown ticket kind.');
@@ -87,7 +82,7 @@ class download_handler {
     }
 
     /**
-     * Stream the ticket's content.
+     * Send the ticket's file.
      *
      * @param array $claims Ticket claims.
      * @param context $context Target context.
@@ -119,12 +114,26 @@ class download_handler {
             return;
         }
 
-        external_api::validate_context($context);
-        if ($claims['k'] === tickets::KIND_COURSE_CONTENT) {
-            self::stream_course_content($context);
-        } else {
-            self::stream_assign_submissions($context, (int)($claims['groupid'] ?? 0));
+        send_stored_file(self::export_file((int)($claims['fid'] ?? 0), $context), 0, 0, true);
+    }
+
+    /**
+     * A finished export zip, only when it belongs to the given user context.
+     *
+     * @param int $fileid Stored file id from the ticket.
+     * @param context $usercontext The ticket user's context.
+     * @return \stored_file
+     * @throws transfer_exception 404 for anything else.
+     */
+    public static function export_file(int $fileid, context $usercontext): \stored_file {
+        $file = get_file_storage()->get_file_by_id($fileid);
+        if (
+            !$file || $file->is_directory() || (int)$file->get_contextid() !== (int)$usercontext->id
+                || $file->get_component() !== export_service::COMPONENT || $file->get_filearea() !== export_service::AREA
+        ) {
+            throw new transfer_exception(404, 'filenotfound', 'File not found.');
         }
+        return $file;
     }
 
     /**
@@ -145,51 +154,5 @@ class download_handler {
      */
     public static function forcedownload(array $claims): bool {
         return !empty($claims['dr']) || !empty($claims['fd']);
-    }
-
-    /**
-     * Stream a course content export zip (as course/downloadcontent.php).
-     *
-     * @param context $context Course context.
-     * @return void
-     */
-    private static function stream_course_content(context $context): void {
-        global $CFG, $USER;
-
-        if (!\core\content::can_export_context($context, $USER)) {
-            throw new transfer_exception(403, 'nopermissions', 'Downloading this course content is not allowed.');
-        }
-        $course = get_fast_modinfo($context->instanceid)->get_course();
-        $filename = str_replace('/', '', str_replace(' ', '_', $course->shortname)) . '_' . time() . '.zip';
-        $options = null;
-        if (!empty($CFG->maxsizeperdownloadcoursefile)) {
-            $options = (object)['maxfilesize' => $CFG->maxsizeperdownloadcoursefile];
-        }
-        header('X-Accel-Buffering: no');
-        $writer = \core\content\export\zipwriter::get_stream_writer($filename, $options);
-        \core\content::export_context($context, $USER, $writer);
-    }
-
-    /**
-     * Stream all assignment submissions as a zip (as the "Download all submissions" action).
-     *
-     * @param context $context Module context.
-     * @param int $groupid Optional group filter.
-     * @return void
-     */
-    private static function stream_assign_submissions(context $context, int $groupid): void {
-        global $CFG;
-        require_once($CFG->dirroot . '/mod/assign/locallib.php');
-
-        [$course, $cm] = get_course_and_cm_from_cmid($context->instanceid, 'assign');
-        $assign = new \assign($context, $cm, $course);
-        $assign->require_view_grades();
-        $userids = $groupid ? export_service::group_userids($cm, $groupid) : null;
-        $downloader = new \mod_assign\downloader($assign, $userids);
-        if (!$downloader->load_filelist()) {
-            throw new transfer_exception(404, 'nosubmission', get_string('nosubmission', 'mod_assign'));
-        }
-        header('X-Accel-Buffering: no');
-        $downloader->download_zip();
     }
 }

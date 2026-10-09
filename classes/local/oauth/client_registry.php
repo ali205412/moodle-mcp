@@ -133,25 +133,26 @@ class client_registry {
     }
 
     /**
-     * Throttle dynamic registrations per source IP.
+     * Throttle dynamic registrations per source IP: a sliding one-hour window stored in the database, so purging
+     * caches does not reset it.
      *
      * @param string $ipaddress Remote address.
      * @return void
      */
     public function enforce_registration_rate_limit(string $ipaddress): void {
-        $cache = \cache::make('webservice_mcp', 'oauth_ratelimit');
-        $key = 'reg_' . sha1($ipaddress);
-        $now = time();
+        global $DB;
 
-        $window = $cache->get($key);
-        if (!is_array($window) || (int)$window['start'] + HOURSECS < $now) {
-            $window = ['start' => $now, 'count' => 0];
-        }
-        if ((int)$window['count'] >= self::REGISTRATIONS_PER_HOUR) {
+        $bucket = hash('sha256', 'registration|' . $ipaddress);
+        $now = time();
+        $recent = $DB->count_records_select(
+            'webservice_mcp_ratelimit',
+            'bucket = :bucket AND timecreated > :since',
+            ['bucket' => $bucket, 'since' => $now - HOURSECS]
+        );
+        if ($recent >= self::REGISTRATIONS_PER_HOUR) {
             throw new exception('invalid_request', 429, 'Too many client registrations from this address. Try again later.');
         }
-        $window['count'] = (int)$window['count'] + 1;
-        $cache->set($key, $window);
+        $DB->insert_record('webservice_mcp_ratelimit', (object)['bucket' => $bucket, 'timecreated' => $now]);
     }
 
     /**

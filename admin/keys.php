@@ -180,7 +180,7 @@ foreach ($existing as $key) {
     $table->data[] = [
         html_writer::checkbox('ids[]', $key->id, false),
         s($key->username),
-        s($key->name),
+        s((string)($key->label ?? $key->name)),
         $issuer ? fullname($issuer) : '',
         s($key->scope),
         $key->validuntil ? userdate($key->validuntil) : '',

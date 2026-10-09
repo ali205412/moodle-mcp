@@ -506,7 +506,7 @@ user's draft area and `file_browser` write checks, backups and restores through 
 | `file_save_draft` | Merge or replace a draft area into a writable file area (private files obey the user quota). |
 | `file_delete` | Delete a file or empty folder the user may manage. |
 | `file_set_course_image` | Set the course overview image from a draft. |
-| `export_course_content` / `export_assignment_submissions` | Links that stream "Download course content" / "Download all submissions" zips. |
+| `export_course_content` / `export_assignment_submissions` | Queue "Download course content" / "Download all submissions" zips, built in the background (adhoc task, as the user, permissions re-checked); `backup_status` with the returned `export...` id gives the zip's uri and a download link. Exports are deleted after 24 hours (`export_service::purge()`). |
 | `backup_create` / `backup_status` / `restore_from_draft` | Asynchronous backups and restores (adhoc tasks; cron must run). |
 
 Uploaded files land in the draft area and return a `draftitemid`; pass it to any Moodle function that accepts
@@ -516,7 +516,7 @@ draft files (assignment submissions, forum attachments, `core_user_add_user_priv
 
 - `GET`/`HEAD`; `OPTIONS` for CORS preflight (origins from the *Allowed transport origins* setting).
 - Single files are served by `file_pluginfile()` (or `send_stored_file()` for the user's own drafts) with ETag/304,
-  `Range` byte serving and X-Sendfile when configured. Exports stream a zip with `X-Accel-Buffering: no`.
+  `Range` byte serving and X-Sendfile when configured. Finished export zips are stored files too, served the same way.
 - Every download carries `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`; draft files are
   always sent as attachments, as core `draftfile.php` does.
 - Links are only issued to connector connections. The ticket binds user, connector credential family, external
@@ -581,4 +581,4 @@ breaks every file download. `^~` keeps regex locations (e.g. the `.php` handler)
 
 Uploads are buffered to disk by nginx before PHP runs, so slow clients do not hold workers; keep
 `client_max_body_size` at least as large as the biggest upload you allow. Exports (course content and
-assignment zips) are generated on the fly and do hold a worker for the duration of the download.
+assignment zips) are built by cron into stored files, so their downloads go through X-Accel-Redirect as well.

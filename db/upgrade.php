@@ -382,5 +382,36 @@ function xmldb_webservice_mcp_upgrade(int $oldversion): bool {
         upgrade_plugin_savepoint(true, 2026101006, 'webservice', 'mcp');
     }
 
+    if ($oldversion < 2026101007) {
+        // Registration rate limits move from MUC to a table, so purging caches no longer resets them.
+        $table = new xmldb_table('webservice_mcp_ratelimit');
+        $table->add_field('id', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+        $table->add_field('bucket', XMLDB_TYPE_CHAR, '64', null, XMLDB_NOTNULL, null, null);
+        $table->add_field('timecreated', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, null);
+        $table->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+        $table->add_index('bucket_time_idx', XMLDB_INDEX_NOTUNIQUE, ['bucket', 'timecreated']);
+        $table->add_index('timecreated_idx', XMLDB_INDEX_NOTUNIQUE, ['timecreated']);
+        if (!$dbman->table_exists($table)) {
+            $dbman->create_table($table);
+        }
+
+        // Admin key labels get their own column; existing labels are copied out of name, which stays as it is.
+        $table = new xmldb_table('webservice_mcp_credential');
+        $field = new xmldb_field('label', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'rotatedat');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+        $index = new xmldb_index('label_idx', XMLDB_INDEX_NOTUNIQUE, ['label']);
+        if (!$dbman->index_exists($table, $index)) {
+            $dbman->add_index($table, $index);
+        }
+        webservice_mcp_copy_admin_key_labels();
+
+        // The showhighrisktools setting was deprecated and ignored; it is now removed.
+        unset_config('showhighrisktools', 'webservice_mcp');
+
+        upgrade_plugin_savepoint(true, 2026101007, 'webservice', 'mcp');
+    }
+
     return true;
 }

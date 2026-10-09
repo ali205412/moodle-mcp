@@ -18,35 +18,226 @@ declare(strict_types=1);
 
 namespace webservice_mcp\local\files;
 
+use context;
 use context_course;
 use context_module;
+use context_user;
 use core_external\external_api;
 use moodle_exception;
+use stored_file;
 use webservice_mcp\local\mcp\call_context;
 
 /**
- * Zip exports: checks permissions now and returns a download ticket; the download endpoint streams the zip.
+ * Asynchronous zip exports (course content, all assignment submissions).
+ *
+ * The tool checks permissions and queues an export_task that runs as the user in cron, re-checks the same
+ * permissions and writes the zip to the user's own export area. The zip is then downloaded as a stored file
+ * (send_stored_file, so X-Sendfile/X-Accel-Redirect applies) instead of being built while a web worker streams it.
+ * State lives in a small JSON stored file next to the zip, so no tables are needed. Exports expire after a day.
  *
  * @package     webservice_mcp
  * @copyright   2026 Ali Abdelaal
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class export_service {
+    /** Component of the export areas. */
+    public const COMPONENT = 'webservice_mcp';
+
+    /** File area holding finished zips (itemid = export id). */
+    public const AREA = 'exports';
+
+    /** File area holding each export's state.json (itemid = export id). */
+    private const STATEAREA = 'exportstate';
+
+    /** Handle prefix, so backup_status can tell exports from backup ids. */
+    public const HANDLE_PREFIX = 'export';
+
+    /** Course content export. */
+    private const KIND_COURSE = 'course_content';
+
+    /** Assignment submissions export. */
+    private const KIND_ASSIGN = 'assign_all';
+
+    /** Exports are deleted after this many seconds. */
+    public const LIFETIME = DAYSECS;
+
     /**
-     * export_course_content: link to a zip of the course content (as "Download course content").
+     * export_course_content: queue a zip of the course content (as "Download course content").
      *
      * @param array $args courseid.
      * @param call_context $ctx Request context.
      * @return array
      */
     public function course_content(array $args, call_context $ctx): array {
-        global $USER;
-
         file_service::apply_restriction($ctx);
         $context = context_course::instance((int)($args['courseid'] ?? 0));
         locator::check_restriction($context, $ctx->restrictedcontext);
         external_api::validate_context($context);
-        if (!\core\content::can_export_context($context, $USER)) {
+        self::check_course_content($context);
+        return $this->queue(self::KIND_COURSE, ['courseid' => (int)$context->instanceid], $ctx);
+    }
+
+    /**
+     * export_assignment_submissions: queue a zip of all (or one group's) submissions.
+     *
+     * @param array $args cmid, groupid.
+     * @param call_context $ctx Request context.
+     * @return array
+     */
+    public function assign_submissions(array $args, call_context $ctx): array {
+        file_service::apply_restriction($ctx);
+        $cmid = (int)($args['cmid'] ?? 0);
+        $context = context_module::instance($cmid);
+        locator::check_restriction($context, $ctx->restrictedcontext);
+        external_api::validate_context($context);
+        $groupid = (int)($args['groupid'] ?? 0);
+        self::check_assign($cmid, $groupid);
+        return $this->queue(self::KIND_ASSIGN, ['cmid' => $cmid, 'groupid' => $groupid], $ctx);
+    }
+
+    /**
+     * State of one of the current user's exports; when finished, its file uri and a fresh download link.
+     *
+     * @param string $handle Export handle (export123).
+     * @param call_context $ctx Request context.
+     * @return array
+     */
+    public function status(string $handle, call_context $ctx): array {
+        global $USER;
+
+        $exportid = self::exportid($handle);
+        $usercontext = context_user::instance($USER->id);
+        $state = $exportid ? self::read_state((int)$usercontext->id, $exportid) : null;
+        if ($state === null) {
+            throw new moodle_exception('invalidparameter', 'debug', '', null, 'No export with that id belongs to you.');
+        }
+        $result = ['backupid' => $handle, 'operation' => 'export', 'type' => $state['kind'], 'state' => $state['state'],
+            'timecreated' => $state['created'], 'expires' => $state['created'] + self::LIFETIME];
+        if ($state['state'] === 'failed') {
+            $result['error'] = $state['error'];
+        } else if ($state['state'] === 'queued') {
+            $result['next'] = 'Waiting for cron to run the adhoc task.';
+        }
+        $file = $state['state'] === 'finished' ? self::export_file((int)$usercontext->id, $exportid) : null;
+        if ($file) {
+            $result['file'] = ['filename' => $file->get_filename(), 'size' => (int)$file->get_filesize(),
+                'uri' => locator::uri_for($file)];
+            try {
+                $link = tickets::download_url($ctx, ['k' => tickets::KIND_EXPORT, 'fid' => (int)$file->get_id()]);
+                $result['file']['download'] = $link;
+                $result['file']['curl'] = 'curl -fL -o ' . escapeshellarg($file->get_filename()) . ' '
+                    . escapeshellarg($link['url']);
+            } catch (moodle_exception $e) {
+                $result['file']['downloaderror'] = $e->getMessage();
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * Build an export (called by export_task in cron, as the export's owner). Failures are recorded, not thrown.
+     *
+     * @param array $data Task data: exportid, kind, params, rc.
+     * @return void
+     */
+    public function build(array $data): void {
+        global $USER;
+
+        $usercontextid = (int)context_user::instance($USER->id)->id;
+        $exportid = (int)($data['exportid'] ?? 0);
+        $state = self::read_state($usercontextid, $exportid);
+        if ($state === null || $state['state'] !== 'queued') {
+            // Purged, or already handled by an earlier run.
+            return;
+        }
+        self::write_state($usercontextid, $exportid, ['state' => 'running'] + $state);
+
+        $dir = null;
+        try {
+            $restriction = empty($data['rc']) ? null : context::instance_by_id((int)$data['rc']);
+            $params = (array)$data['params'];
+            [$path, $filename] = $state['kind'] === self::KIND_COURSE
+                ? $this->build_course_content((int)$params['courseid'], $restriction)
+                : $this->build_assign((int)$params['cmid'], (int)$params['groupid'], $restriction);
+            $dir = dirname($path);
+            get_file_storage()->create_file_from_pathname(['contextid' => $usercontextid, 'component' => self::COMPONENT,
+                'filearea' => self::AREA, 'itemid' => $exportid, 'filepath' => '/', 'filename' => $filename,
+                'userid' => $USER->id], $path);
+            self::write_state($usercontextid, $exportid, ['state' => 'finished'] + $state);
+        } catch (\Throwable $e) {
+            $message = $e instanceof moodle_exception ? $e->getMessage() : 'Internal error while building the export.';
+            if (!($e instanceof moodle_exception)) {
+                debugging('MCP export ' . $exportid . ' failed: ' . $e->getMessage(), DEBUG_DEVELOPER);
+            }
+            self::write_state($usercontextid, $exportid, ['state' => 'failed', 'error' => $message] + $state);
+        } finally {
+            if ($dir !== null) {
+                remove_dir($dir);
+            }
+        }
+    }
+
+    /**
+     * Delete exports (zips and state) created more than LIFETIME seconds ago. Called by the cleanup task.
+     *
+     * @param int|null $now Current time, for tests.
+     * @return int Number of exports deleted.
+     */
+    public static function purge(?int $now = null): int {
+        global $DB;
+
+        $cutoff = ($now ?? time()) - self::LIFETIME;
+        $rows = $DB->get_records_select(
+            'files',
+            'component = :component AND filearea = :filearea AND filename = :filename AND timecreated < :cutoff',
+            ['component' => self::COMPONENT, 'filearea' => self::STATEAREA, 'filename' => 'state.json', 'cutoff' => $cutoff],
+            '',
+            'id, contextid, itemid'
+        );
+        $fs = get_file_storage();
+        foreach ($rows as $row) {
+            $fs->delete_area_files((int)$row->contextid, self::COMPONENT, self::AREA, (int)$row->itemid);
+            $fs->delete_area_files((int)$row->contextid, self::COMPONENT, self::STATEAREA, (int)$row->itemid);
+        }
+        return count($rows);
+    }
+
+    /**
+     * The current user's finished export file for given file params, if it is one.
+     *
+     * @param array $params File params (contextid, component, filearea, itemid, filepath, filename).
+     * @return stored_file|null
+     */
+    public static function own_file(array $params): ?stored_file {
+        global $USER;
+
+        if (
+            ($params['component'] ?? '') !== self::COMPONENT || ($params['filearea'] ?? '') !== self::AREA
+                || (int)$params['contextid'] !== (int)context_user::instance($USER->id)->id
+        ) {
+            return null;
+        }
+        $file = get_file_storage()->get_file(
+            $params['contextid'],
+            self::COMPONENT,
+            self::AREA,
+            $params['itemid'],
+            $params['filepath'],
+            $params['filename']
+        );
+        return $file && !$file->is_directory() ? $file : null;
+    }
+
+    /**
+     * Throw unless the user may export the course content.
+     *
+     * @param context $context Course context.
+     * @return void
+     */
+    private static function check_course_content(context $context): void {
+        global $USER;
+
+        if (!can_access_course(get_course($context->instanceid)) || !\core\content::can_export_context($context, $USER)) {
             throw new moodle_exception(
                 'nopermissions',
                 'error',
@@ -54,34 +245,26 @@ class export_service {
                 'download course content (it may be disabled for this site or course)'
             );
         }
-        $link = tickets::download_url($ctx, ['k' => tickets::KIND_COURSE_CONTENT, 'courseid' => (int)$context->instanceid]);
-        return self::link_result($link, 'course-' . $context->instanceid . '.zip');
     }
 
     /**
-     * export_assignment_submissions: link to a zip of all (or one group's) submissions.
+     * Throw unless the user may download all submissions (and see the group, when given).
      *
-     * @param array $args cmid, groupid.
-     * @param call_context $ctx Request context.
-     * @return array
+     * @param int $cmid Assignment course module id.
+     * @param int $groupid Group id or 0.
+     * @return array [\assign, int[]|null user ids]
      */
-    public function assign_submissions(array $args, call_context $ctx): array {
+    private static function check_assign(int $cmid, int $groupid): array {
         global $CFG;
         require_once($CFG->dirroot . '/mod/assign/locallib.php');
 
-        file_service::apply_restriction($ctx);
-        [$course, $cm] = get_course_and_cm_from_cmid((int)($args['cmid'] ?? 0), 'assign');
-        $context = context_module::instance($cm->id);
-        locator::check_restriction($context, $ctx->restrictedcontext);
-        external_api::validate_context($context);
-        (new \assign($context, $cm, $course))->require_view_grades();
-        $groupid = (int)($args['groupid'] ?? 0);
-        if ($groupid) {
-            self::group_userids($cm, $groupid);
+        [$course, $cm] = get_course_and_cm_from_cmid($cmid, 'assign');
+        if (!$cm->uservisible || !can_access_course($course)) {
+            throw new moodle_exception('nopermissions', 'error', '', 'access this assignment');
         }
-        $link = tickets::download_url($ctx, array_filter(['k' => tickets::KIND_ASSIGN_ALL, 'cmid' => (int)$cm->id,
-            'groupid' => $groupid ?: null]));
-        return self::link_result($link, 'submissions-' . $cm->id . '.zip');
+        $assign = new \assign(context_module::instance($cm->id), $cm, $course);
+        $assign->require_view_grades();
+        return [$assign, $groupid ? self::group_userids($cm, $groupid) : null];
     }
 
     /**
@@ -105,18 +288,140 @@ class export_service {
     }
 
     /**
-     * Tool result for a streamed download link.
+     * Record a queued export and queue its adhoc task as the current user.
      *
-     * @param array $link url and expires.
-     * @param string $filename Suggested local file name.
-     * @return array
+     * @param string $kind Export kind.
+     * @param array $params Kind parameters.
+     * @param call_context $ctx Request context.
+     * @return array Tool result.
      */
-    private static function link_result(array $link, string $filename): array {
+    private function queue(string $kind, array $params, call_context $ctx): array {
+        global $USER;
+
+        // The finished zip is only useful through a download link, which needs the service's download flag.
+        tickets::require_service_flag($ctx->serviceid, 'downloadfiles');
+        $usercontextid = (int)context_user::instance($USER->id)->id;
+        do {
+            $exportid = random_int(1, 2147483647);
+        } while (self::read_state($usercontextid, $exportid) !== null);
+        self::write_state($usercontextid, $exportid, ['state' => 'queued', 'kind' => $kind, 'created' => time()]);
+
+        $task = new export_task();
+        $task->set_custom_data(['exportid' => $exportid, 'params' => $params,
+            'rc' => $ctx->restrictedcontext ? (int)$ctx->restrictedcontext->id : null]);
+        $task->set_userid($USER->id);
+        \core\task\manager::queue_adhoc_task($task);
+
         return [
-            'url' => $link['url'],
-            'expires' => $link['expires'],
-            'curl' => 'curl -fL -o ' . escapeshellarg($filename) . ' ' . escapeshellarg($link['url']),
-            'note' => 'The zip is generated while it downloads, so its size is not known in advance.',
+            'backupid' => self::HANDLE_PREFIX . $exportid,
+            'state' => 'queued',
+            'next' => 'The zip is built in the background on the next cron run. Poll backup_status with this backupid; '
+                . 'when finished it returns a download link. Exports are deleted after 24 hours.',
         ];
+    }
+
+    /**
+     * Zip the course content into a temporary file.
+     *
+     * @param int $courseid Course id.
+     * @param context|null $restriction Token context restriction at queue time.
+     * @return array [path, filename]
+     */
+    private function build_course_content(int $courseid, ?context $restriction): array {
+        global $CFG, $USER;
+
+        $context = context_course::instance($courseid);
+        locator::check_restriction($context, $restriction);
+        self::check_course_content($context);
+        $course = get_course($courseid);
+        $filename = clean_filename(str_replace(' ', '_', $course->shortname) . '_' . time() . '.zip');
+        $options = empty($CFG->maxsizeperdownloadcoursefile) ? null
+            : (object)['maxfilesize' => $CFG->maxsizeperdownloadcoursefile];
+        $writer = \core\content\export\zipwriter::get_file_writer($filename, $options);
+        \core\content::export_context($context, $USER, $writer);
+        return [$writer->get_file_path(), $filename];
+    }
+
+    /**
+     * Zip the assignment submissions into a temporary file (same contents as "Download all submissions").
+     *
+     * @param int $cmid Assignment course module id.
+     * @param int $groupid Group id or 0.
+     * @param context|null $restriction Token context restriction at queue time.
+     * @return array [path, filename]
+     */
+    private function build_assign(int $cmid, int $groupid, ?context $restriction): array {
+        locator::check_restriction(context_module::instance($cmid), $restriction);
+        [$assign, $userids] = self::check_assign($cmid, $groupid);
+        $downloader = new assign_export_downloader($assign, $userids);
+        if (!$downloader->load_filelist()) {
+            throw new moodle_exception('nosubmission', 'mod_assign');
+        }
+        $cm = $assign->get_course_module();
+        $filename = clean_filename($assign->get_course()->shortname . '-' . $assign->get_instance()->name . '-' . $cm->id
+            . '.zip');
+        $zip = \core_files\archive_writer::get_file_writer($filename, \core_files\archive_writer::ZIP_WRITER);
+        foreach ($downloader->files() as $pathinzip => $file) {
+            if ($file instanceof stored_file) {
+                $zip->add_file_from_stored_file($pathinzip, $file);
+            } else if (is_array($file)) {
+                // Online text and similar plugins provide content instead of a file.
+                $zip->add_file_from_string($pathinzip, (string)reset($file));
+            }
+        }
+        $zip->finish();
+        \mod_assign\event\all_submissions_downloaded::create_from_assign($assign)->trigger();
+        return [$zip->get_path_to_zip(), $filename];
+    }
+
+    /**
+     * Export id from a handle.
+     *
+     * @param string $handle Handle such as export123.
+     * @return int Export id, 0 when malformed.
+     */
+    private static function exportid(string $handle): int {
+        return preg_match('/^' . self::HANDLE_PREFIX . '(\d{1,10})$/', $handle, $m) ? (int)$m[1] : 0;
+    }
+
+    /**
+     * The finished zip of an export.
+     *
+     * @param int $usercontextid Owner's user context id.
+     * @param int $exportid Export id.
+     * @return stored_file|null
+     */
+    private static function export_file(int $usercontextid, int $exportid): ?stored_file {
+        $files = get_file_storage()->get_area_files($usercontextid, self::COMPONENT, self::AREA, $exportid, 'id', false);
+        return $files ? reset($files) : null;
+    }
+
+    /**
+     * Read an export's state.
+     *
+     * @param int $usercontextid Owner's user context id.
+     * @param int $exportid Export id.
+     * @return array|null
+     */
+    private static function read_state(int $usercontextid, int $exportid): ?array {
+        $file = get_file_storage()->get_file($usercontextid, self::COMPONENT, self::STATEAREA, $exportid, '/', 'state.json');
+        $state = $file ? json_decode($file->get_content(), true) : null;
+        return is_array($state) ? $state : null;
+    }
+
+    /**
+     * Replace an export's state; timecreated stays the queue time so purge() ages exports from creation.
+     *
+     * @param int $usercontextid Owner's user context id.
+     * @param int $exportid Export id.
+     * @param array $state State (state, kind, created, error).
+     * @return void
+     */
+    private static function write_state(int $usercontextid, int $exportid, array $state): void {
+        $fs = get_file_storage();
+        $fs->delete_area_files($usercontextid, self::COMPONENT, self::STATEAREA, $exportid);
+        $fs->create_file_from_string(['contextid' => $usercontextid, 'component' => self::COMPONENT,
+            'filearea' => self::STATEAREA, 'itemid' => $exportid, 'filepath' => '/', 'filename' => 'state.json',
+            'timecreated' => (int)$state['created']], json_encode($state));
     }
 }

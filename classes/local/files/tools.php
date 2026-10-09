@@ -74,7 +74,8 @@ class tools {
                     'readOnlyHint' => !self::is_mutating($name),
                     'destructiveHint' => in_array($name, ['file_delete', 'file_save_draft', 'restore_from_draft'], true),
                     'idempotentHint' => !in_array($name, ['file_upload', 'file_upload_from_url', 'backup_create',
-                        'restore_from_draft', 'file_create_upload_url'], true),
+                        'restore_from_draft', 'file_create_upload_url', 'export_course_content',
+                        'export_assignment_submissions'], true),
                     'openWorldHint' => $name === 'file_upload_from_url',
                 ],
             ];

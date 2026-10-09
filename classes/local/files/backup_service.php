@@ -144,6 +144,9 @@ class backup_service {
         global $DB, $USER;
 
         $backupid = clean_param((string)($args['backupid'] ?? ''), PARAM_ALPHANUM);
+        if (strpos($backupid, export_service::HANDLE_PREFIX) === 0) {
+            return (new export_service())->status($backupid, $ctx);
+        }
         $record = $backupid === '' ? false : $DB->get_record(
             'backup_controllers',
             ['backupid' => $backupid],

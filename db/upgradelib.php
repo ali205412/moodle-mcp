@@ -96,3 +96,17 @@ function webservice_mcp_seed_redirect_hosts(): array {
     set_config('allowedredirecthosts', implode("\n", $hosts), 'webservice_mcp');
     return $hosts;
 }
+
+/**
+ * Copy admin-issued key labels from name into the dedicated label column (keeping name), for keys without one.
+ *
+ * @return void
+ */
+function webservice_mcp_copy_admin_key_labels(): void {
+    global $DB;
+
+    $DB->execute(
+        'UPDATE {webservice_mcp_credential} SET label = name WHERE tokentype = :tokentype AND label IS NULL',
+        ['tokentype' => 3]
+    );
+}

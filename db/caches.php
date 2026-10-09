@@ -59,12 +59,6 @@ $definitions = [
         'simpledata' => true,
         'ttl' => 3600,
     ],
-    'oauth_ratelimit' => [
-        'mode' => cache_store::MODE_APPLICATION,
-        'simplekeys' => true,
-        'simpledata' => true,
-        'ttl' => 3600,
-    ],
     'mcp_visibility' => [
         'mode' => cache_store::MODE_APPLICATION,
         'simplekeys' => true,

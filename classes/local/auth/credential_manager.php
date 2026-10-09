@@ -239,6 +239,7 @@ class credential_manager {
                 'resourceuri' => $options['resourceuri'] ?? null,
                 'oauthclientid' => null,
                 'issuerid' => (int)$issuer->id,
+                'label' => (string)($options['label'] ?? '') ?: null,
                 'usermodified' => (int)$issuer->id,
             ]
         );
@@ -513,6 +514,7 @@ class credential_manager {
             'familyid' => $options['familyid'] ?? null,
             'familycreated' => $options['familycreated'] ?? null,
             'issuerid' => $options['issuerid'] ?? null,
+            'label' => $options['label'] ?? null,
         ];
 
         $record->id = $DB->insert_record(self::TABLE, $record);

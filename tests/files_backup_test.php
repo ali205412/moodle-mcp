@@ -31,7 +31,6 @@ use webservice_mcp\local\mcp\call_context;
  * @copyright   2026 Ali Abdelaal
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  * @covers      \webservice_mcp\local\files\backup_service
- * @covers      \webservice_mcp\local\files\export_service
  * @covers      \webservice_mcp\local\files\tools
  */
 final class files_backup_test extends advanced_testcase {
@@ -120,31 +119,6 @@ final class files_backup_test extends advanced_testcase {
             $this->assertInstanceOf(\required_capability_exception::class, $e);
         }
         $this->assertSame(0, $DB->count_records('backup_controllers', ['operation' => 'restore']));
-    }
-
-    /**
-     * Export tools check permissions up front.
-     */
-    public function test_export_tools_check_permissions_up_front(): void {
-        $generator = $this->getDataGenerator();
-        $course = $generator->create_course();
-        $teacher = $generator->create_and_enrol($course, 'editingteacher');
-        $student = $generator->create_and_enrol($course, 'student');
-        $assign = $generator->create_module('assign', ['course' => $course->id]);
-
-        $link = $this->call($teacher, 'export_assignment_submissions', ['cmid' => $assign->cmid])['structuredContent'];
-        $this->assertStringContainsString('/webservice/mcp/pluginfile.php?ticket=', $link['url']);
-
-        try {
-            $this->call($student, 'export_assignment_submissions', ['cmid' => $assign->cmid]);
-            $this->fail('Student export allowed.');
-        } catch (\required_capability_exception $e) {
-            $this->assertInstanceOf(\required_capability_exception::class, $e);
-        }
-
-        set_config('downloadcoursecontentallowed', 0);
-        $this->expectException(\moodle_exception::class);
-        $this->call($teacher, 'export_course_content', ['courseid' => $course->id]);
     }
 
     /**

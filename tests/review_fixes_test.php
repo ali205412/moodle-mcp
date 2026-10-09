@@ -277,4 +277,83 @@ final class review_fixes_test extends advanced_testcase {
         ]);
         $this->assertSame('https://mofeed.info/api/remote-mcp/callback', $validated['redirecturi']);
     }
+
+    /**
+     * Registration rate limits live in the database: purging caches does not reset the window.
+     */
+    public function test_registration_rate_limit_survives_cache_purge(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+        $registry = new \webservice_mcp\local\oauth\client_registry();
+        for ($i = 0; $i < 20; $i++) {
+            $registry->enforce_registration_rate_limit('198.51.100.9');
+        }
+        \cache_helper::purge_all();
+        try {
+            $registry->enforce_registration_rate_limit('198.51.100.9');
+            $this->fail('The 21st registration within an hour must be refused.');
+        } catch (\webservice_mcp\local\oauth\exception $exception) {
+            $this->assertSame(429, $exception->http_status());
+        }
+
+        // Hits older than the window no longer count, and the cleanup task deletes them.
+        $DB->set_field('webservice_mcp_ratelimit', 'timecreated', time() - 3 * HOURSECS);
+        $registry->enforce_registration_rate_limit('198.51.100.9');
+        (new task\cleanup())->execute();
+        $this->assertSame(1, $DB->count_records('webservice_mcp_ratelimit'));
+    }
+
+    /**
+     * Admin key labels are copied out of name into the label column, and label filters use it.
+     */
+    public function test_admin_key_label_migration_and_filter(): void {
+        global $CFG, $DB;
+        require_once($CFG->dirroot . '/webservice/mcp/db/upgradelib.php');
+
+        $this->resetAfterTest(true);
+        $user = $this->create_mcp_user();
+        $results = (new admin_key_service())->issue([(int)$user->id], ['label' => 'Spring pilot'], get_admin());
+        $id = (int)$DB->get_field('webservice_mcp_credential', 'id', ['userid' => $user->id, 'tokentype' => 3]);
+        $this->assertSame('Spring pilot', $DB->get_field('webservice_mcp_credential', 'label', ['id' => $id]));
+
+        // Simulate a key issued before the label column existed, plus an OAuth token that must stay unlabelled.
+        $DB->set_field('webservice_mcp_credential', 'label', null, ['id' => $id]);
+        $oauth = (new credential_manager())->issue_oauth_access_token(
+            (object)['shortname' => 'webservice_mcp_connector'],
+            (int)$user->id,
+            context_system::instance(),
+            ['name' => 'Spring pilot']
+        );
+        webservice_mcp_copy_admin_key_labels();
+
+        $this->assertSame('Spring pilot', $DB->get_field('webservice_mcp_credential', 'label', ['id' => $id]));
+        $this->assertSame('Spring pilot', $DB->get_field('webservice_mcp_credential', 'name', ['id' => $id]));
+        $this->assertNull($DB->get_field('webservice_mcp_credential', 'label', ['id' => $oauth->id]));
+
+        $keys = new admin_key_service();
+        $this->assertCount(1, $keys->list_keys(['label' => 'Spring pilot']));
+        $this->assertSame(1, $keys->count_keys(['label' => 'Spring pilot']));
+        $this->assertSame(1, $keys->revoke_keys(['label' => 'Spring pilot'], get_admin()));
+        $this->assertNull((new credential_manager())->resolve_credential($results[0]->token));
+        $this->assertNotNull((new credential_manager())->resolve_credential($oauth->token));
+    }
+
+    /**
+     * The deprecated showhighrisktools setting is gone from the settings page and the language pack.
+     */
+    public function test_showhighrisktools_setting_removed(): void {
+        global $CFG;
+        require_once($CFG->libdir . '/adminlib.php');
+
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+
+        $page = admin_get_root(true, true)->locate('webservicesettingmcp');
+        $this->assertNotEmpty($page);
+        // Settings pages key plugin settings as plugin name + setting name.
+        $this->assertTrue(isset($page->settings->webservice_mcpoauthenabled));
+        $this->assertFalse(isset($page->settings->webservice_mcpshowhighrisktools));
+        $this->assertFalse(get_string_manager()->string_exists('settings:showhighrisktools', 'webservice_mcp'));
+    }
 }

@@ -297,7 +297,7 @@ class admin_key_service {
 
         [$where, $params] = self::filter_sql($filters);
         return $DB->get_records_sql(
-            "SELECT c.id, c.userid, c.issuerid, c.name, c.scope, c.timecreated, c.validuntil, c.lastaccess,
+            "SELECT c.id, c.userid, c.issuerid, c.name, c.label, c.scope, c.timecreated, c.validuntil, c.lastaccess,
                     u.username, u.email
                FROM {webservice_mcp_credential} c
                JOIN {user} u ON u.id = c.userid
@@ -334,7 +334,7 @@ class admin_key_service {
 
         $base = ['tokentype' => credential_manager::TOKEN_TYPE_ADMIN];
         if (!empty($filters['label'])) {
-            $base['name'] = (string)$filters['label'];
+            $base['label'] = (string)$filters['label'];
         }
         if (!empty($filters['issuerid'])) {
             $base['issuerid'] = (int)$filters['issuerid'];
@@ -493,7 +493,7 @@ class admin_key_service {
     private static function filter_sql(array $filters): array {
         $where = 'c.tokentype = :tokentype AND c.revoked = 0 AND (c.validuntil IS NULL OR c.validuntil >= :now)';
         $params = ['tokentype' => credential_manager::TOKEN_TYPE_ADMIN, 'now' => time()];
-        foreach (['label' => 'c.name', 'issuerid' => 'c.issuerid', 'userid' => 'c.userid'] as $key => $column) {
+        foreach (['label' => 'c.label', 'issuerid' => 'c.issuerid', 'userid' => 'c.userid'] as $key => $column) {
             if (!empty($filters[$key])) {
                 $where .= " AND {$column} = :{$key}";
                 $params[$key] = $filters[$key];

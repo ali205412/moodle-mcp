@@ -67,7 +67,7 @@ class connection_service {
         [$groupkey, $where, $params] = $this->grouping_sql($userid);
         $records = $DB->get_records_sql(
             "SELECT {$groupkey} AS connectionkey,
-                    MAX(c.userid) AS userid, MAX(c.oauthclientid) AS clientid, MAX(c.name) AS name,
+                    MAX(c.userid) AS userid, MAX(c.oauthclientid) AS clientid, MAX(c.name) AS name, MAX(c.label) AS keylabel,
                     MAX(oc.clientname) AS clientname, MAX(c.tokentype) AS tokentype, MAX(c.issuerid) AS issuerid,
                     MAX(c.contextid) AS contextid, MAX(c.scope) AS scope,
                     MIN(COALESCE(c.familycreated, c.timecreated)) AS timecreated,
@@ -88,7 +88,7 @@ class connection_service {
                 'key' => $record->connectionkey,
                 'userid' => (int)$record->userid,
                 'clientid' => (string)($record->clientid ?? ''),
-                'label' => (string)($record->clientname ?: ($record->clientid ?: $record->name)),
+                'label' => (string)($record->keylabel ?: ($record->clientname ?: ($record->clientid ?: $record->name))),
                 'tokentype' => (int)$record->tokentype,
                 'issuerid' => (int)$record->issuerid,
                 'contextid' => (int)$record->contextid,

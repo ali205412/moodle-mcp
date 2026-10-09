@@ -236,13 +236,6 @@ if ($hassiteconfig && $settings instanceof admin_settingpage && $ADMIN->fulltree
         0
     ));
 
-    $settings->add(new admin_setting_configcheckbox(
-        'webservice_mcp/showhighrisktools',
-        get_string('settings:showhighrisktools', 'webservice_mcp'),
-        get_string('settings:showhighrisktools_desc', 'webservice_mcp'),
-        1
-    ));
-
     $settings->add(new admin_setting_heading(
         'webservice_mcp/filesheading',
         get_string('settings:filesheading', 'webservice_mcp'),

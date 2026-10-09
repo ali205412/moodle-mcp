@@ -234,12 +234,13 @@ class locator {
 
     /**
      * Throw unless a context is inside the token's context restriction. The caller's own draft area is exempt
-     * because drafts are per-user scratch space needed to submit files anywhere.
+     * because drafts are per-user scratch space needed to submit files anywhere, and so is their own export
+     * area, whose zips were built from contexts checked against the restriction when the export was queued.
      *
      * @param context $context Target context.
      * @param context|null $restriction Token context restriction.
-     * @param string|null $component Component, for the draft exemption.
-     * @param string|null $filearea File area, for the draft exemption.
+     * @param string|null $component Component, for the draft and export exemptions.
+     * @param string|null $filearea File area, for the draft and export exemptions.
      * @return void
      * @throws restricted_context_exception
      */
@@ -254,10 +255,9 @@ class locator {
         if ($restriction === null || $restriction->contextlevel == CONTEXT_SYSTEM || $restriction->id == $context->id) {
             return;
         }
-        if (
-            $component === 'user' && $filearea === 'draft' && $context->contextlevel == CONTEXT_USER
-                && (int)$context->instanceid === (int)$USER->id
-        ) {
+        $ownarea = ($component === 'user' && $filearea === 'draft')
+            || ($component === export_service::COMPONENT && $filearea === export_service::AREA);
+        if ($ownarea && $context->contextlevel == CONTEXT_USER && (int)$context->instanceid === (int)$USER->id) {
             return;
         }
         if (!in_array($restriction->id, $context->get_parent_context_ids())) {

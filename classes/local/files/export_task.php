@@ -14,20 +14,24 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+declare(strict_types=1);
+
+namespace webservice_mcp\local\files;
+
 /**
- * MCP web service plugin version information.
+ * Adhoc task that builds one queued export zip, running as the user who asked for it.
  *
  * @package     webservice_mcp
- * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
- * @copyright   2025 MohammadReza PourMohammad
- * @link        https://onbir.dev
+ * @copyright   2026 Ali Abdelaal
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-
-defined('MOODLE_INTERNAL') || die();
-
-$plugin->version = 2026101007;
-$plugin->requires = 2023041800;
-$plugin->component = 'webservice_mcp';
-$plugin->maturity = MATURITY_BETA;
-$plugin->release = '0.9.1';
+class export_task extends \core\task\adhoc_task {
+    /**
+     * Build the export; failures are recorded in the export's state, so the task never retries.
+     *
+     * @return void
+     */
+    public function execute() {
+        (new export_service())->build((array)json_decode(json_encode($this->get_custom_data()), true));
+    }
+}

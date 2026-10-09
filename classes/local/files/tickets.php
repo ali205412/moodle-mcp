@@ -39,17 +39,14 @@ class tickets {
     /** Download a single file. */
     public const KIND_FILE = 'file';
 
-    /** Stream a course content export zip. */
-    public const KIND_COURSE_CONTENT = 'course_content';
-
-    /** Stream an assignment "download all submissions" zip. */
-    public const KIND_ASSIGN_ALL = 'assign_all';
+    /** Download one of the user's finished export zips (by stored file id). */
+    public const KIND_EXPORT = 'export';
 
     /**
      * Issue a download ticket URL.
      *
      * @param call_context $ctx Request context.
-     * @param array $claims Kind-specific claims: k plus rp/dr/fd/pv (file), courseid (course_content), cmid/groupid (assign_all).
+     * @param array $claims Kind-specific claims: k plus rp/dr/fd/pv (file) or fid (export).
      * @param int|null $ttl Requested lifetime in seconds.
      * @return array{url:string, expires:int}
      */

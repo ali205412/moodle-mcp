@@ -14,20 +14,27 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+declare(strict_types=1);
+
+namespace webservice_mcp\local\files;
+
 /**
- * MCP web service plugin version information.
+ * The assignment "Download all submissions" file list, without the downloader's streaming-and-exit step.
+ *
+ * Reuses \mod_assign\downloader's selection (users, groups, blind marking, folder layout, plugin files) so an
+ * export contains exactly what the core action would; export_service writes the zip to a file instead.
  *
  * @package     webservice_mcp
- * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
- * @copyright   2025 MohammadReza PourMohammad
- * @link        https://onbir.dev
+ * @copyright   2026 Ali Abdelaal
  * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-
-defined('MOODLE_INTERNAL') || die();
-
-$plugin->version = 2026101007;
-$plugin->requires = 2023041800;
-$plugin->component = 'webservice_mcp';
-$plugin->maturity = MATURITY_BETA;
-$plugin->release = '0.9.1';
+class assign_export_downloader extends \mod_assign\downloader {
+    /**
+     * Files selected by load_filelist(): path in zip => stored_file, or [content] for text submissions.
+     *
+     * @return array
+     */
+    public function files(): array {
+        return $this->filesforzipping ?? [];
+    }
+}

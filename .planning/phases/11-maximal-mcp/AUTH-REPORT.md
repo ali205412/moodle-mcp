@@ -4,8 +4,8 @@ Scope: auth/OAuth layer of `webservice_mcp` (Moodle 4.2+), security findings H1-
 plus feature requests (A) bulk admin-minted keys, (B) OAuth pre-approval, (C) Enterprise Managed Auth (jwt-bearer),
 and follow-ups (assertion replay protection, users-file upload, idnumber selector, bulk user action).
 
-- Plugin version: **`$plugin->version = 2026101006`**, release `0.9.0`. Auth schema and data changes are in upgrade
-  steps 2026100900, 2026101000, 2026101003, 2026101004, 2026101005 and 2026101006; 2026101001 (task table) and 2026101002 (visibility cache) belong to other owners.
+- Plugin version: **`$plugin->version = 2026101007`**, release `0.9.0`. Auth schema and data changes are in upgrade
+  steps 2026100900, 2026101000, 2026101003, 2026101004, 2026101005, 2026101006 and 2026101007; 2026101001 (task table) and 2026101002 (visibility cache) belong to other owners.
   Auth work no longer touches `db/`.
 - Nothing is committed.
 
@@ -980,16 +980,78 @@ revoke.
 All failures are in other owners' in-progress tests: `activity_service_test` (add_module) and, on 4.5,
 `mcp_hardening_test::test_run_tool_applies_context_restriction`. Every auth test passes.
 
+## Round 7: rate limits in the database, admin key label column, showhighrisktools removed (step 2026101007)
+
+Production runs 2026101006. Every operation in step 2026101007 is additive or idempotent:
+
+- creating the table is guarded by `table_exists`;
+- adding the field and index is guarded by exists checks;
+- the label copy only fills NULL labels;
+- `unset_config` is harmless if the setting is absent.
+
+### Schema and data
+
+- **New table `webservice_mcp_ratelimit`:** `id`, `bucket` char(64) (SHA-256 of the limited key; registration uses
+  `registration|<ip>`), `timecreated`. Indexes `bucket_time_idx (bucket, timecreated)` and `timecreated_idx`.
+- **New column `webservice_mcp_credential.label`** char(255) null, with index `label_idx`.
+  - The upgrade runs `webservice_mcp_copy_admin_key_labels()`: `label = name` for tokentype 3 rows without a label.
+    `name` is untouched.
+- **Removed:**
+  - `unset_config('showhighrisktools', 'webservice_mcp')`;
+  - the setting from `settings.php` and its two lang strings;
+  - the `oauth_ratelimit` cache definition and its lang string.
+
+### Code
+
+- **`client_registry::enforce_registration_rate_limit()`:** counts rows for the bucket in the last hour (sliding
+  window) and refuses the 21st with HTTP 429. Otherwise it inserts a row.
+- **`classes/task/cleanup.php`:**
+  - deletes rate-limit rows older than 2 hours;
+  - calls `\webservice_mcp\local\files\export_service::purge($now)` for async exports older than 24 hours
+    (files-builder's method).
+- **Admin keys:**
+  - `credential_manager::issue_admin_credential()` stores `label` (and still `name`).
+  - `admin_key_service::list_keys()`, `count_keys()` and `revoke_keys()` filter on `c.label`.
+  - The admin page, CLI `--list` and the connected-apps list show the label.
+- **No reads of `showhighrisktools` remain.** `tool_provider_test` and `discovery_service_test` (not my files) still
+  set it to 0 to prove a leftover value has no effect; they pass.
+
+### Tests (`review_fixes_test`)
+
+- **`test_registration_rate_limit_survives_cache_purge`:**
+  - 20 registrations, then `cache_helper::purge_all()`; the 21st still gets 429;
+  - hits older than the window stop counting, and the cleanup task deletes them.
+- **`test_admin_key_label_migration_and_filter`:**
+  - new keys get a label;
+  - the migration fills a missing label from `name` and leaves `name` and non-admin rows untouched;
+  - label filter, count and revoke work after migration and leave an OAuth token with the same `name` alone.
+- **`test_showhighrisktools_setting_removed`:** the plugin settings page contains `oauthenabled` but not
+  `showhighrisktools`, and the lang string is gone.
+
+### Results (plugin version 2026101007)
+
+| Moodle / DB | Result |
+|---|---|
+| 4.2 / MariaDB 10.11 (`scripts/run-local-tests.sh mariadb`) | `Tests: 293, Assertions: 1817, Errors: 1, Failures: 1` |
+| 4.5 / PostgreSQL 18rc1 (isolated compose project `mcpauth`, after 5432 was free) | `Tests: 293, Assertions: 1820, Errors: 1, Failures: 1` |
+
+Both failures are in files-builder's in-progress `files_export_test`:
+
+- `test_assignment_export_builds_in_cron`: `stored_file::list_files()` ArgumentCountError from the test's zip check.
+- `test_purge`: expected 2, got 4. That test calls `export_service::purge()` directly, not the cleanup task.
+
+All auth tests pass, including the three new ones. phpcs on this batch's files reports no errors or warnings.
+
 ## Known limitations
 
 Resolved in round 3: strict refresh rotation (now a grace window), cache-only jti storage (now a table), hard-coded
-retention periods and listing caps (now settings with pagination), and the missing pre-registration UI.
+retention periods and listing caps (now settings with pagination), and the missing pre-registration UI. Resolved in
+round 4: secret rotation. Resolved in round 7: cache-only registration rate limits (now a table) and labels stored in
+`name` (now a `label` column).
 
 What remains:
 
 1. **No `logo_uri`:** a metadata document's `logo_uri` isn't shown on the consent page, because a remote image from an
    unverified client aids phishing and leaks the user's IP.
-2. **Labels use `name`:** admin key labels are stored in the existing `name` column.
-3. **Upgrade-time provisioning gap:** users already on the connector service at upgrade time are recorded by the
+2. **Upgrade-time provisioning gap:** users already on the connector service at upgrade time are recorded by the
    upgrade step and the hourly sync. An admin removal made before either has run may be undone once.
-4. **Registration rate limits live in MUC:** a cache purge resets the 20-per-hour window.

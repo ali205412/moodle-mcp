@@ -154,7 +154,7 @@ switch (reset($actions)) {
                 "%-8d %-30s %-30s %-20s %s",
                 $key->id,
                 $key->username,
-                $key->name,
+                $key->label ?? $key->name,
                 $key->scope,
                 $key->validuntil ? date('c', (int)$key->validuntil) : '-'
             ));
