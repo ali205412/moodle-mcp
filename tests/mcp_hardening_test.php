@@ -210,4 +210,28 @@ final class mcp_hardening_test extends advanced_testcase {
         $moodle = dispatcher::error_result(new \moodle_exception('nopermissions', 'error', '', 'do that'))['content'][0]['text'];
         $this->assertStringContainsString('do that', $moodle);
     }
+
+    /**
+     * Parameter validation reasons reach the client; other debuginfo (e.g. SQL) stays hidden.
+     */
+    public function test_error_result_shows_validation_reason(): void {
+        $this->resetAfterTest();
+        set_debugging(DEBUG_NORMAL);
+        // Under PHPUnit Moodle copies debuginfo into the message, so set it afterwards to test only what error_result adds.
+        $invalid = new \invalid_parameter_exception();
+        $invalid->debuginfo = 'Missing required key in single structure: courseid';
+        $this->assertStringContainsString('Missing required key in single structure: courseid',
+            dispatcher::error_result($invalid)['content'][0]['text']);
+
+        $wrapped = new \moodle_exception('wrapper:apiexecutefailed', 'webservice_mcp', '',
+            (object)['functionname' => 'core_course_get_contents', 'errorcode' => 'invalidparameter', 'message' => 'x']);
+        $wrapped->debuginfo = 'Invalid external api parameter: the value is "abc", the server was expecting "int" type';
+        $text = dispatcher::error_result($wrapped)['content'][0]['text'];
+        $this->assertStringContainsString('Error [invalidparameter]', $text);
+        $this->assertStringContainsString('expecting "int" type', $text);
+
+        $db = new \moodle_exception('dmlreadexception');
+        $db->debuginfo = 'SELECT secret FROM {user}';
+        $this->assertStringNotContainsString('SELECT secret', dispatcher::error_result($db)['content'][0]['text']);
+    }
 }

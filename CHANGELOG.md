@@ -1,6 +1,16 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Version 0.9.4 (2026101010)
+- OAuth: concurrent refreshes of a pre-0.9.0 refresh token no longer log the user out (legacy tokens join a token
+  family on first rotation, so the grace window applies)
+- Tool errors explain themselves: parameter validation reasons (including native Moodle functions via the gateway)
+  reach the client; every wrapper input error names what was wrong and what is accepted
+- `file_list` with component=user filearea=draft lists your draft areas; unreadable listings say what was looked up
+- `moodle_explorer` opens a course when only `courseid` is passed
+- Audit: failed outcomes store their error message (`detail` column); rejected bearer tokens are audited again
+  (`invalid_token`, `token_expired`, `token_revoked`)
+
 ## Version 0.9.3 (2026101009)
 - Page images of Office files: retry a conversion that core cached as failed (e.g. one attempted before the
   converter worked) instead of returning the stale failure; clearer conversion error messages

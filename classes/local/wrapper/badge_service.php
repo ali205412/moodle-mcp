@@ -179,7 +179,7 @@ class badge_service {
         $badge = $this->editable_relation_badge($badgeid);
         $relatedbadgeids = $this->normalize_ids($relatedbadgeids);
         if ($relatedbadgeids === []) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid('relatedbadgeids must contain at least one positive badge id.');
         }
 
         $this->require_relatable_badges($badge, $relatedbadgeids);
@@ -375,7 +375,9 @@ class badge_service {
         \require_capability('moodle/badges:configuredetails', $context);
 
         if ($badge->is_active() || $badge->is_locked()) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid(
+                'Badge ' . $badgeid . ' is active or locked; deactivate it before changing related badges or alignments.'
+            );
         }
 
         return $badge;
@@ -461,17 +463,22 @@ class badge_service {
         global $USER;
 
         if (empty($badge->criteria[BADGE_CRITERIA_TYPE_MANUAL])) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid(
+                'Badge ' . $badge->id . ' has no manual-award criterion; add one (with the roles allowed to award) first.'
+            );
         }
 
         $acceptedroles = array_values(array_map('intval', array_keys($badge->criteria[BADGE_CRITERIA_TYPE_MANUAL]->params)));
         if ($acceptedroles === []) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid('Badge ' . $badge->id . ' manual-award criterion lists no roles allowed to award it.');
         }
 
         if ($requestedroleid !== null) {
             if (!in_array($requestedroleid, $acceptedroles, true) && !is_siteadmin()) {
-                throw new \moodle_exception('invalidparameter');
+                throw arguments::invalid(
+                    'issuerroleid ' . $requestedroleid . ' is not one of the roles allowed to award this badge: '
+                    . implode(', ', $acceptedroles) . '.'
+                );
             }
 
             if (!is_siteadmin()) {

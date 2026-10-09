@@ -189,7 +189,7 @@ class course_authoring_service {
             'show' => 'cm_show',
             'hide' => 'cm_hide',
             'stealth' => 'cm_stealth',
-            default => throw new \moodle_exception('invalidparameter'),
+            default => throw arguments::invalid('Unknown visibility "' . $visibility . '"; use show, hide or stealth.'),
         };
 
         return [
@@ -343,7 +343,7 @@ class course_authoring_service {
         $updates = $this->stateupdates($course);
         $actions = $this->stateactions($course);
         if (!is_callable([$actions, $action])) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid('The course format does not support the action "' . $action . '".');
         }
 
         $actions->$action(

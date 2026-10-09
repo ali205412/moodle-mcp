@@ -4,8 +4,8 @@ Scope: auth/OAuth layer of `webservice_mcp` (Moodle 4.2+), security findings H1-
 plus feature requests (A) bulk admin-minted keys, (B) OAuth pre-approval, (C) Enterprise Managed Auth (jwt-bearer),
 and follow-ups (assertion replay protection, users-file upload, idnumber selector, bulk user action).
 
-- Plugin version: **`$plugin->version = 2026101008`**, release `0.9.0`. Auth schema and data changes are in upgrade
-  steps 2026100900, 2026101000, 2026101003, 2026101004, 2026101005, 2026101006, 2026101007 and 2026101008; 2026101001 (task table) and 2026101002 (visibility cache) belong to other owners.
+- Plugin version: **`$plugin->version = 2026101010`**, release `0.9.4`. Auth schema and data changes are in upgrade
+  steps 2026100900, 2026101000, 2026101003, 2026101004, 2026101005, 2026101006, 2026101007, 2026101008 and 2026101010; 2026101001 (task table) and 2026101002 (visibility cache) belong to other owners.
   Auth work no longer touches `db/`.
 - Nothing is committed.
 
@@ -1096,6 +1096,124 @@ The failures are in files-builder's in-progress short-link and export work:
 All auth tests pass. phpcs on this batch's files is clean.
 
 The `pathtopdftotext` setting was not added: files-builder hadn't asked for it when this was written.
+
+## Round 9 (0.9.4): legacy refresh grace and audit error messages (step 2026101010)
+
+### 1. Refresh grace for pre-0.9.0 refresh tokens
+
+**Bug.** Grace-period reuse required a non-empty `familyid`. Production example: legacy refresh token 1670
+(familyid NULL) received 4 concurrent refreshes. The first succeeded; the other 3 waited on the lock, then saw a
+revoked token with no family and got `invalid_grant`. The user had to re-consent.
+
+**Fix.** In `token_issuer::refresh_access_token()`, inside the refresh transaction, a refresh row without a family
+first gets a new `familyid` (and `familycreated`, which is its `timecreated` when empty) persisted on the old row.
+Then the new pair is issued in that family, and the old row is marked rotated. The requests queued behind it read
+that family and get grace-period pairs. Reuse after the window still revokes the family.
+
+**No backfill step.** I chose not to add one:
+
+- Legacy OAuth access tokens live at most an hour, so any from before 0.9.0 have already expired.
+- The only long-lived legacy rows are refresh tokens, and the fix gives them a family at their next use, before any
+  grace decision.
+- Pairing old access and refresh rows by user, client and `timecreated` is a heuristic that could merge unrelated
+  grants.
+- Family checks for a legacy access token already use `c_<id>`, which `family_active()` handles.
+
+**Test.** `oauth_service_test::test_legacy_refresh_token_gets_family_and_grace`:
+
+- the tokens are made legacy (familyid and familycreated NULL);
+- the first refresh creates a family, also stored on the old row, with `familycreated` equal to the old row's
+  `timecreated`;
+- a second refresh with the same token inside the window succeeds in the same family, and both pairs work;
+- reuse after the window gets `invalid_grant` and revokes the family.
+
+### 2. Audit rows keep the error message
+
+**Schema.** Step 2026101010 adds a nullable `webservice_mcp_audit.detail` char(255). `install.xml` VERSION and
+`version.php` are 2026101010, release 0.9.4.
+
+**Logger.** `logger::record()` stores `detail` only when the outcome is not `success`. It is cleaned by
+`logger::clean_detail()`: whitespace and newlines collapsed to single spaces, trimmed, cut to 255 characters, and an
+empty value stored as NULL.
+
+**Sources of the message** (`classes/local/transport/server.php`):
+
+- **Failed tool calls:** the error text the client received (`content[0].text`).
+- **Protocol 401/403 errors:** the exception message.
+- **Other failures (`generate_error`):** `audit_detail_message()`.
+  - Moodle exceptions are rebuilt from their language string, so debug information (which can contain argument
+    values or SQL) is never stored, whatever the debug level.
+  - Other throwables use `getMessage()`. That stays server-side: the client still gets "Internal error".
+
+Tool arguments and tokens are never written.
+
+**Privacy.** The provider declares the field and exports it as `message` with each audit entry. New lang string
+`privacy:metadata:audit:detail`, inserted in byte order.
+
+**Tests** (`tests/audit_detail_test.php`):
+
+- the logger stores a single-line message of 255 characters for an error and nothing for a success;
+- a transport `generate_error` for `invalidparameter` with debug info `secret argument hunter2` stores the
+  language-string message without the debug info.
+
+### Results (version 2026101010)
+
+| Moodle / DB | Result |
+|---|---|
+| 4.2 / MariaDB 10.11 | `Tests: 312, Assertions: 1925, Errors: 1, Failures: 1` |
+| 4.5 / PostgreSQL (isolated) | `Tests: 312, Assertions: 1925, Errors: 1, Failures: 1, Skipped: 1` |
+
+Neither failure is in auth code:
+
+- `files_access_test::test_draft_areas_are_listed` (files owner).
+- `mcp_hardening_test::test_error_result_shows_validation_reason`: the dispatcher's client text contains SQL debug
+  info in the test environment.
+
+Every auth test passes. phpcs is clean on the touched files. phpcbf also ran over `transport/server.php`; it only
+changes formatting.
+
+`review_fixes_test::test_link_table_upgrade_cleanup_and_privacy` now accepts any version ≥ 2026101008, because
+re-running the upgrade from 2026101007 also runs the new guarded 2026101010 step.
+
+## Round 9b (0.9.4): rejected-token auditing restored
+
+**Regression.** The transport rewrite dropped auditing of rejected tokens. Before 0.9.0, production logged 688
+`invalid_token` rows; after it, 8 HTTP 401s were served without an audit row.
+
+**Fix.** `transport/server.php` gained `record_rejected_token_audit()`, called from `send_error()` and
+`handle_head_request()` whenever the status is 401.
+
+- **Only requests that presented a bearer token are audited.** A request with no Authorization header (discovery
+  probes) is not, to avoid noise.
+- **Row contents:** action `request`, outcome `error`, and the `detail` message (from `audit_detail_message()`).
+- **Detail codes:**
+  - `token_expired` for a known plugin credential whose `validuntil` has passed;
+  - `token_revoked` for a known, revoked credential;
+  - `invalid_token` for anything else (unknown token, raw web service token).
+- **User and credential:** `credentialid` and `userid` are set when the token is a known credential. Otherwise
+  `userid` is NULL rather than 0. NULL means the same thing, and the privacy provider (`userid IS NOT NULL`) then
+  never reports a phantom user 0.
+- **Table growth:** anyone can now add rows by sending garbage tokens, as before 0.9.0. They are removed after
+  `auditretentiondays`.
+
+**Test.** `audit_detail_test::test_rejected_tokens_are_audited`:
+
+- an unknown bearer token gives exactly one row with detailcode `invalid_token`, userid NULL and the
+  language-string message;
+- an expired credential gives `token_expired` with its user and credential;
+- a request without a token adds no row.
+
+`review_fixes_test::test_link_table_upgrade_cleanup_and_privacy` now asserts that the version after the upgrade
+equals `core_plugin_manager` `versiondisk`, so future bumps don't break it.
+
+### Results (version 2026101010)
+
+| Moodle / DB | Result |
+|---|---|
+| 4.2 / MariaDB 10.11 | `OK (313 tests, 1938 assertions)` |
+| 4.5 / PostgreSQL (isolated) | `OK, but incomplete, skipped, or risky tests! Tests: 313, Assertions: 1938, Skipped: 1` |
+
+phpcs is clean on the touched files.
 
 ## Known limitations
 

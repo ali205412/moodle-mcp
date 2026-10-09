@@ -433,5 +433,16 @@ function xmldb_webservice_mcp_upgrade(int $oldversion): bool {
         upgrade_plugin_savepoint(true, 2026101008, 'webservice', 'mcp');
     }
 
+    if ($oldversion < 2026101010) {
+        // Audit rows keep the error message, not only its code, so failures can be diagnosed.
+        $table = new xmldb_table('webservice_mcp_audit');
+        $field = new xmldb_field('detail', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'detailcode');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+
+        upgrade_plugin_savepoint(true, 2026101010, 'webservice', 'mcp');
+    }
+
     return true;
 }

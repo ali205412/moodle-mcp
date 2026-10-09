@@ -148,6 +148,7 @@ $string['pluginname'] = 'Model Context Protocol';
 $string['privacy:metadata'] = 'The MCP web service plugin does not store any personal data. It provides a protocol for accessing existing Moodle web service functions.';
 $string['privacy:metadata:audit'] = 'Audit trail of requests made through the MCP connector.';
 $string['privacy:metadata:audit:action'] = 'The type of request.';
+$string['privacy:metadata:audit:detail'] = 'The error message of a failed request.';
 $string['privacy:metadata:audit:outcome'] = 'Whether the request succeeded.';
 $string['privacy:metadata:audit:timecreated'] = 'When the request was made.';
 $string['privacy:metadata:audit:toolname'] = 'The tool that was called.';

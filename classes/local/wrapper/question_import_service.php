@@ -56,7 +56,7 @@ class question_import_service {
 
         $format = strtolower(trim($format));
         if (!in_array($format, ['gift', 'xml'], true)) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid('Unsupported import format "' . $format . '"; use gift or xml.');
         }
 
         // The format is whitelisted above, so the path is fixed.
@@ -64,7 +64,7 @@ class question_import_service {
 
         $classname = 'qformat_' . $format;
         if (!class_exists($classname)) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid('The question import format "' . $format . '" is not installed on this site.');
         }
 
         $category = $this->get_category($categoryid);
@@ -75,7 +75,7 @@ class question_import_service {
         /** @var \qformat_default $importer */
         $importer = new $classname();
         if (!$importer->provide_import()) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid('The question format "' . $format . '" cannot import questions.');
         }
 
         $tmpdir = \make_temp_directory('webservice_mcp/question-imports');

@@ -20,7 +20,6 @@ namespace webservice_mcp\local\files;
 
 use context_user;
 use file_info;
-use moodle_exception;
 use webservice_mcp\local\mcp\call_context;
 
 /**
@@ -76,6 +75,8 @@ class lister {
             $context = context_user::instance($USER->id);
             $params = ['contextid' => $context->id, 'component' => 'user', 'filearea' => 'draft',
                 'itemid' => (int)$args['draftitemid'], 'filepath' => $filepath ?? '/', 'filename' => '.'];
+        } else if (($args['component'] ?? '') === 'user' && ($args['filearea'] ?? '') === 'draft' && !isset($args['itemid'])) {
+            return $this->draft_areas($limit, $offset);
         } else {
             $context = file_service::target_context($args) ?? context_user::instance($USER->id);
             $params = ['contextid' => $context->id];
@@ -98,7 +99,11 @@ class lister {
             $node = locator::file_info($params + ['itemid' => 0, 'filepath' => '/', 'filename' => '.']);
         }
         if ($node === null || !$node->is_readable()) {
-            throw new moodle_exception('filenotfound', 'error');
+            $looked = array_diff_key($params, ['filename' => 1]);
+            $where = implode(', ', array_map(fn($k) => "{$k} {$looked[$k]}", array_keys($looked)));
+            throw new transfer_exception(404, 'filenotfound', "Nothing you can read at {$where}. Browse with file_list "
+                . 'courseid (add recursive=true for activity files), cmid, or no arguments for your private files; '
+                . 'list your draft areas with component=user, filearea=draft.');
         }
         if (!$node->is_directory()) {
             return ['node' => locator::describe($node), 'entries' => [], 'hasmore' => false];
@@ -120,6 +125,47 @@ class lister {
         }
         if ($context->contextlevel == CONTEXT_USER && (int)$context->instanceid === (int)$USER->id) {
             $result['limits'] = file_service::user_limits();
+        }
+        return $result;
+    }
+
+    /**
+     * List the current user's draft areas, newest first.
+     *
+     * @param int $limit Page size.
+     * @param int $offset Page offset.
+     * @return array
+     */
+    private function draft_areas(int $limit, int $offset): array {
+        global $DB, $USER;
+
+        $context = context_user::instance($USER->id);
+        $rows = $DB->get_records_sql(
+            "SELECT itemid, COUNT(1) AS files, SUM(filesize) AS bytes, MAX(timemodified) AS timemodified
+               FROM {files}
+              WHERE contextid = :contextid AND component = 'user' AND filearea = 'draft' AND filename <> '.'
+           GROUP BY itemid
+           ORDER BY MAX(timemodified) DESC, itemid DESC",
+            ['contextid' => $context->id],
+            $offset,
+            $limit + 1
+        );
+        $areas = array_map(fn($r) => [
+            'draftitemid' => (int)$r->itemid,
+            'files' => (int)$r->files,
+            'size' => (int)$r->bytes,
+            'timemodified' => (int)$r->timemodified,
+        ], array_values($rows));
+        $hasmore = count($areas) > $limit;
+        $result = [
+            'view' => 'draftareas',
+            'draftareas' => array_slice($areas, 0, $limit),
+            'offset' => $offset,
+            'hasmore' => $hasmore,
+            'hint' => 'Pass draftitemid to file_list to see the files in one draft area.',
+        ];
+        if ($hasmore) {
+            $result['nextoffset'] = $offset + $limit;
         }
         return $result;
     }

@@ -357,7 +357,9 @@ class server extends legacy_server {
                 $action === 'tool_call' ? $this->functionname : null,
                 $action === 'tool_call' && $this->current_request_is_mutating(),
                 empty($result['isError']) ? 'success' : 'error',
-                $result['_meta']['org.moodle/errorcode'] ?? null
+                $result['_meta']['org.moodle/errorcode'] ?? null,
+                // The same text the client received for the failed call.
+                empty($result['isError']) ? null : ($result['content'][0]['text'] ?? null)
             );
             if ($auditid) {
                 $result['_meta']['org.moodle/auditId'] = $auditid;
@@ -663,7 +665,8 @@ class server extends legacy_server {
                 $this->functionname ?: null,
                 (bool)$this->currentmutating,
                 'error',
-                $exception->rpccode === self::INSUFFICIENT_SCOPE ? 'insufficient_scope' : 'protocol_error'
+                $exception->rpccode === self::INSUFFICIENT_SCOPE ? 'insufficient_scope' : 'protocol_error',
+                $exception->getMessage()
             ))
         ) {
             $error['data']['auditId'] = $auditid;
@@ -689,12 +692,56 @@ class server extends legacy_server {
             ));
         }
         $this->set_status($status);
+        if ($status === 401) {
+            $this->record_rejected_token_audit($ex);
+        }
 
         if ($ex !== null && debugging('', DEBUG_MINIMAL)) {
             $this->log_exception_for_debug($ex);
         }
 
         $this->emit($this->safe_json_encode($this->generate_error($ex)));
+    }
+
+    /**
+     * Audit a rejected bearer token (HTTP 401).
+     *
+     * Only requests that presented a token are audited: anonymous discovery probes without an Authorization header
+     * would only add noise. The row names the credential and its user when the token is a known plugin credential.
+     *
+     * @param \Throwable|null $ex The authentication failure.
+     * @return void
+     */
+    protected function record_rejected_token_audit(?\Throwable $ex): void {
+        if (empty($this->publictoken)) {
+            return;
+        }
+
+        $credential = (new \webservice_mcp\local\auth\credential_manager())->find_credential((string)$this->publictoken);
+        $code = 'invalid_token';
+        if ($credential && !empty($credential->validuntil) && (int)$credential->validuntil < time()) {
+            $code = 'token_expired';
+        } else if ($credential && !empty($credential->revoked)) {
+            $code = 'token_revoked';
+        }
+
+        try {
+            $this->auditlogger->record([
+                'userid' => $credential ? (int)$credential->userid : null,
+                'credentialid' => $credential ? (int)$credential->id : null,
+                'sessionid' => $this->transportrequest['sessionid'] ?? null,
+                'requestid' => $this->request_id_string(),
+                'action' => 'request',
+                'outcome' => 'error',
+                'detailcode' => $code,
+                'detail' => $ex !== null ? $this->audit_detail_message($ex) : null,
+            ]);
+        } catch (\Throwable $exception) {
+            if (defined('PHPUNIT_TEST') && PHPUNIT_TEST) {
+                throw $exception;
+            }
+            debugging('MCP audit write failed: ' . $exception->getMessage(), DEBUG_DEVELOPER);
+        }
     }
 
     /**
@@ -725,7 +772,8 @@ class server extends legacy_server {
                 $this->functionname ?: null,
                 (bool)$this->currentmutating,
                 'error',
-                $this->audit_detail_code($ex)
+                $this->audit_detail_code($ex),
+                $this->audit_detail_message($ex)
             ))
         ) {
             $error['error']['data']['auditId'] = $auditid;
@@ -1046,6 +1094,7 @@ class server extends legacy_server {
      * @param bool $mutating Whether the request mutates state.
      * @param string $outcome Event outcome.
      * @param string|null $detailcode Optional restriction or error code.
+     * @param string|null $detail Optional error message (stored for non-success outcomes only).
      * @return string|null
      */
     protected function record_audit_event(
@@ -1053,7 +1102,8 @@ class server extends legacy_server {
         ?string $toolname,
         bool $mutating,
         string $outcome,
-        ?string $detailcode = null
+        ?string $detailcode = null,
+        ?string $detail = null
     ): ?string {
         $userid = isset($this->transportidentity->user->id) ? (int)$this->transportidentity->user->id : ($this->userid ?? null);
         if (empty($userid)) {
@@ -1077,6 +1127,7 @@ class server extends legacy_server {
                 'mutating' => $mutating,
                 'outcome' => $outcome,
                 'detailcode' => $detailcode,
+                'detail' => $detail,
             ]);
         } catch (\Throwable $exception) {
             if (defined('PHPUNIT_TEST') && PHPUNIT_TEST) {
@@ -1128,6 +1179,7 @@ class server extends legacy_server {
                     'Authorization is required to access this MCP server.',
                     $this->oauth_default_scope()
                 ));
+                $this->record_rejected_token_audit($exception);
             }
             $this->set_status($status);
         }
@@ -1143,6 +1195,26 @@ class server extends legacy_server {
             return null;
         }
         return (string)$this->mcprequest->id;
+    }
+
+    /**
+     * Extract the error message for audit storage, as production users see it.
+     *
+     * Moodle exceptions are rebuilt from their language string, so debug information (which can echo argument
+     * values) is never stored, whatever the debugging level.
+     *
+     * @param mixed $exception Exception-like payload.
+     * @return string|null
+     */
+    protected function audit_detail_message(mixed $exception): ?string {
+        if (
+            $exception instanceof moodle_exception && $exception->errorcode !== '' &&
+                get_string_manager()->string_exists($exception->errorcode, (string)$exception->module)
+        ) {
+            return get_string($exception->errorcode, (string)$exception->module, $exception->a);
+        }
+
+        return $exception instanceof \Throwable ? $exception->getMessage() : null;
     }
 
     /**

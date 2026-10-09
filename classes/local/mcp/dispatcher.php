@@ -501,8 +501,13 @@ class dispatcher {
         // PHP errors carry server paths and line numbers; only Moodle exceptions have user-facing messages.
         $text = $message ?? ($e instanceof \moodle_exception || debugging('', DEBUG_DEVELOPER)
             ? $e->getMessage() : 'Internal error.');
-        if ($e instanceof \moodle_exception && !empty($e->debuginfo) && debugging('', DEBUG_DEVELOPER)) {
-            $text .= ' (' . $e->debuginfo . ')';
+        // Parameter validation explains what was wrong only in debuginfo; the model needs that to fix its call.
+        // Other debuginfo (SQL, internals) stays developer-only.
+        if (
+            $e instanceof \moodle_exception && !empty($e->debuginfo)
+                && ($errorcode === 'invalidparameter' || debugging('', DEBUG_DEVELOPER))
+        ) {
+            $text .= ' (' . \core_text::substr(trim(preg_replace('/\s+/', ' ', (string)$e->debuginfo)), 0, 500) . ')';
         }
         return [
             'isError' => true,

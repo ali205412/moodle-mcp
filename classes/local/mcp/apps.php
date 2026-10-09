@@ -50,13 +50,17 @@ class apps {
             'name' => self::EXPLORER_TOOL,
             'title' => 'Moodle Explorer',
             'description' => 'Interactive browser of your Moodle courses: course list with progress, then sections, activities, '
-                . 'files (with download) and upcoming deadlines. view=courses (default) or view=course with courseid. '
+                . 'files (with download) and upcoming deadlines. Pass courseid to open one course; omit it for the course list. '
                 . 'Hosts that support MCP Apps show it as an interactive panel; others get a text summary.',
             'inputSchema' => [
                 'type' => 'object',
                 'properties' => [
-                    'view' => ['type' => 'string', 'enum' => ['courses', 'course'], 'default' => 'courses'],
-                    'courseid' => ['type' => 'integer', 'description' => 'Required when view=course.'],
+                    'view' => [
+                        'type' => 'string',
+                        'enum' => ['courses', 'course'],
+                        'description' => 'Defaults to course when courseid is given.',
+                    ],
+                    'courseid' => ['type' => 'integer', 'description' => 'Course to open; required when view=course.'],
                 ],
             ],
             'annotations' => ['readOnlyHint' => true, 'destructiveHint' => false, 'idempotentHint' => true,
@@ -84,7 +88,7 @@ class apps {
      */
     public static function execute(array $args, call_context $ctx): array {
         $ctx->require_scope(false);
-        if (($args['view'] ?? 'courses') === 'course') {
+        if (($args['view'] ?? (empty($args['courseid']) ? 'courses' : 'course')) === 'course') {
             $courseid = (int)($args['courseid'] ?? 0);
             if ($courseid <= 0) {
                 throw new \invalid_parameter_exception('courseid is required for view=course');

@@ -283,6 +283,16 @@ class token_issuer {
 
             $transaction = $DB->start_delegated_transaction();
             try {
+                if ($familyid === '') {
+                    // A refresh token from before token families (0.9.0) starts its family now, on the token itself,
+                    // so concurrent refreshes queued behind this one find the family and get grace-period pairs.
+                    $familyid = bin2hex(random_bytes(16));
+                    $DB->update_record('webservice_mcp_credential', (object)[
+                        'id' => $record->id,
+                        'familyid' => $familyid,
+                        'familycreated' => $familycreated,
+                    ]);
+                }
                 $response = $this->issue_oauth_token_pair(
                     $client,
                     $service,
@@ -290,7 +300,7 @@ class token_issuer {
                     $context,
                     (string)($record->scope ?? $this->oauth->default_scope_string()),
                     (string)$record->resourceuri,
-                    $familyid !== '' ? $familyid : bin2hex(random_bytes(16)),
+                    $familyid,
                     $familycreated
                 );
                 if (!$graceperiodreuse) {

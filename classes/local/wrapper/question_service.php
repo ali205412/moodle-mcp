@@ -57,7 +57,7 @@ class question_service {
 
         $questionids = arguments::ids($questionids);
         if ($questionids === []) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid('questionids must contain at least one positive question id.');
         }
 
         // Mirrors qbank_bulkmove: 'add' in the target context, 'move' on every source question.
@@ -93,7 +93,7 @@ class question_service {
 
         $questionids = arguments::ids($questionids);
         if ($questionids === []) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid('questionids must contain at least one positive question id.');
         }
 
         // Check every question before deleting any, so a permission failure leaves the bank untouched.
@@ -202,7 +202,9 @@ class question_service {
         external_api::validate_context($context);
 
         if (isset($payload['categoryid']) && (int)$payload['categoryid'] !== (int)$existing->category) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid(
+                'categoryid cannot change when updating a question; use wrapper_question_move_questions to move it.'
+            );
         }
 
         $form = $this->formbuilder->build_question_form((string)$existing->qtype, $payload, $existing, $category);
@@ -223,7 +225,9 @@ class question_service {
         moodle_lib::load('lib/questionlib.php');
         moodle_lib::load('lib/filelib.php');
         if (!class_exists('\qbank_previewquestion\helper')) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid(
+                'Question preview is not available: the qbank_previewquestion plugin is not installed or enabled.'
+            );
         }
 
         $question = question_bank::load_question($questionid);
@@ -251,7 +255,9 @@ class question_service {
     private function supported_qtype(string $qtype): string {
         $qtype = strtolower(trim($qtype));
         if (!in_array($qtype, ['shortanswer', 'truefalse', 'essay', 'description'], true)) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid(
+                'Unsupported question type "' . $qtype . '"; supported: shortanswer, truefalse, essay, description.'
+            );
         }
 
         return $qtype;

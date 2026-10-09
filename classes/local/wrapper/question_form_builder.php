@@ -79,7 +79,9 @@ class question_form_builder {
             'truefalse' => $this->apply_truefalse_payload($form, $payload),
             'essay' => $this->apply_essay_payload($form, $payload),
             'description' => $form,
-            default => throw new \moodle_exception('invalidparameter'),
+            default => throw arguments::invalid(
+                'Unsupported question type "' . $qtype . '"; supported: shortanswer, truefalse, essay, description.'
+            ),
         };
     }
 
@@ -125,7 +127,9 @@ class question_form_builder {
                 'responsetemplate' => ['text' => '', 'format' => FORMAT_HTML],
             ]),
             'description' => $form,
-            default => throw new \moodle_exception('invalidparameter'),
+            default => throw arguments::invalid(
+                'Unsupported question type "' . $qtype . '"; supported: shortanswer, truefalse, essay, description.'
+            ),
         };
     }
 
@@ -163,7 +167,11 @@ class question_form_builder {
             'truefalse' => $this->truefalse_form_from_existing($form, $questiondata),
             'essay' => $this->essay_form_from_existing($form, $questiondata),
             'description' => $form,
-            default => throw new \moodle_exception('invalidparameter'),
+            default => throw arguments::invalid(
+                'Question ' . (int)$questiondata->id . ' is of type "' . $questiondata->qtype
+                . '", which this wrapper cannot edit; '
+                . 'supported: shortanswer, truefalse, essay, description. Use the Moodle question bank for other types.'
+            ),
         };
     }
 
@@ -206,7 +214,7 @@ class question_form_builder {
 
         if (array_key_exists('answers', $payload)) {
             if (!is_array($payload['answers']) || $payload['answers'] === []) {
-                throw new \moodle_exception('invalidparameter');
+                throw arguments::invalid('answers must be a non-empty list of {answer, fraction, feedback} objects.');
             }
 
             $form->answer = [];
@@ -214,7 +222,9 @@ class question_form_builder {
             $form->feedback = [];
             foreach ($payload['answers'] as $answer) {
                 if (!is_array($answer)) {
-                    throw new \moodle_exception('invalidparameter');
+                    throw arguments::invalid(
+                        'Each entry in answers must be an object with answer, fraction (0-1) and optional feedback.'
+                    );
                 }
                 $form->answer[] = (string)($answer['answer'] ?? '');
                 $form->fraction[] = (string)($answer['fraction'] ?? '0');
@@ -362,7 +372,7 @@ class question_form_builder {
      */
     private function normalize_hints(mixed $hints): array {
         if (!is_array($hints)) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid('hints must be a list of strings or {text, format} objects.');
         }
 
         $normalized = [];
@@ -372,7 +382,7 @@ class question_form_builder {
                 continue;
             }
             if (!is_array($hint)) {
-                throw new \moodle_exception('invalidparameter');
+                throw arguments::invalid('Each hint must be a string or a {text, format} object.');
             }
             $normalized[] = [
                 'text' => (string)($hint['text'] ?? ''),

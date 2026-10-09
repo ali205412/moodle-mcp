@@ -52,7 +52,8 @@ class tool_definitions {
                     . '(private files, backups) plus your upload limits. Pass courseid (recursive=true walks the course files '
                     . 'and every activity you can see), cmid, contextid, userid, or draftitemid (an upload draft area). Narrow '
                     . 'to one area with component+filearea, optionally itemid (usually 0) and filepath, e.g. component=user '
-                    . 'filearea=private itemid=0. Entries have type context|area|folder|file; files carry uri '
+                    . 'filearea=private itemid=0; component=user filearea=draft alone lists your draft areas. '
+                    . 'Entries have type context|area|folder|file; files carry uri '
                     . '(moodle://file/...), size, mimetype, author, license and writable. Use a file uri with file_read, '
                     . 'file_get_download_url or file_delete; list a folder by passing its contextid/component/filearea/itemid/'
                     . 'filepath. Results are paged: limit (max 1000) and offset; follow nextoffset while hasmore is true.',

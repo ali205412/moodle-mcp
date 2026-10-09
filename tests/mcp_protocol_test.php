@@ -451,6 +451,9 @@ final class mcp_protocol_test extends advanced_testcase {
         }
         $this->assertContains('Week 1 notes', $names);
         $this->assertStringContainsString('Week 1 notes', $view['content'][0]['text']);
+
+        // Passing courseid alone opens that course instead of silently returning the course list.
+        $this->assertSame('course', apps::execute(['courseid' => $course->id], $ctx)['structuredContent']['view']);
     }
 
     /**

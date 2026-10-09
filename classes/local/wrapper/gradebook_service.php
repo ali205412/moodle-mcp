@@ -440,7 +440,10 @@ class gradebook_service {
     private function manual_grade_item(int $courseid, int $itemid): \grade_item {
         $item = $this->grade_item($courseid, $itemid);
         if ($item->itemtype !== 'manual' || $item->is_course_item() || $item->is_category_item()) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid(
+                'Grade item ' . $itemid . ' is not a manual grade item; only manual items (not course, category or activity '
+                . 'items) can be changed with this tool.'
+            );
         }
 
         return $item;
@@ -467,7 +470,7 @@ class gradebook_service {
             'value' => GRADE_TYPE_VALUE,
             'scale' => GRADE_TYPE_SCALE,
             'text' => GRADE_TYPE_TEXT,
-            default => throw new \moodle_exception('invalidparameter'),
+            default => throw arguments::invalid('Unknown gradetype "' . $type . '"; use value, scale or text.'),
         };
     }
 

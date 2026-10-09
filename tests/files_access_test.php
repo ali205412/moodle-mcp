@@ -354,4 +354,39 @@ final class files_access_test extends advanced_testcase {
         $this->expectException(\moodle_exception::class);
         $this->call($this->student, 'file_list', ['limit' => 'many']);
     }
+
+    /**
+     * component=user filearea=draft without an item id lists the user's draft areas instead of failing.
+     */
+    public function test_draft_areas_are_listed(): void {
+        $this->setUser($this->student);
+        $draftitemid = file_get_unused_draft_itemid();
+        get_file_storage()->create_file_from_string(['contextid' => \context_user::instance($this->student->id)->id,
+            'component' => 'user', 'filearea' => 'draft', 'itemid' => $draftitemid, 'filepath' => '/',
+            'filename' => 'essay.txt'], 'draft text');
+
+        $result = $this->call($this->student, 'file_list', ['component' => 'user', 'filearea' => 'draft'])['structuredContent'];
+        $this->assertSame('draftareas', $result['view']);
+        $this->assertSame($draftitemid, $result['draftareas'][0]['draftitemid']);
+        $this->assertSame(1, $result['draftareas'][0]['files']);
+
+        // Another user's drafts never appear.
+        $other = $this->call($this->teacher, 'file_list', ['component' => 'user', 'filearea' => 'draft'])['structuredContent'];
+        $this->assertNotContains($draftitemid, array_column($other['draftareas'], 'draftitemid'));
+    }
+
+    /**
+     * An unreadable listing explains what was looked up and how to browse instead.
+     */
+    public function test_file_list_not_found_explains(): void {
+        try {
+            $this->call($this->student, 'file_list', ['cmid' => $this->folder->cmid, 'component' => 'mod_folder',
+                'filearea' => 'nosucharea', 'itemid' => 0]);
+            $this->fail('Expected filenotfound');
+        } catch (\webservice_mcp\local\files\transfer_exception $e) {
+            $this->assertSame('filenotfound', $e->errorcode);
+            $this->assertStringContainsString('filearea nosucharea', $e->getMessage());
+            $this->assertStringContainsString('Browse with file_list', $e->getMessage());
+        }
+    }
 }

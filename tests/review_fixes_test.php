@@ -377,7 +377,11 @@ final class review_fixes_test extends advanced_testcase {
 
         $this->assertTrue(xmldb_webservice_mcp_upgrade(2026101007));
         $this->assertTrue($dbman->table_exists('webservice_mcp_link'));
-        $this->assertSame('2026101008', (string)get_config('webservice_mcp', 'version'));
+        // Later steps run too (they are guarded): the site ends at whatever version.php declares.
+        $this->assertSame(
+            (string)\core_plugin_manager::instance()->get_plugin_info('webservice_mcp')->versiondisk,
+            (string)get_config('webservice_mcp', 'version')
+        );
         $this->assertNotNull((new credential_manager())->resolve_credential($keys[0]->token), 'Existing keys survive.');
         $this->assertSame(1, (new admin_key_service())->count_keys(['label' => 'Before 101008']));
 

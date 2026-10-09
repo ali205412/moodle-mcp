@@ -88,6 +88,7 @@ class provider implements
             'action' => 'privacy:metadata:audit:action',
             'toolname' => 'privacy:metadata:audit:toolname',
             'outcome' => 'privacy:metadata:audit:outcome',
+            'detail' => 'privacy:metadata:audit:detail',
             'timecreated' => 'privacy:metadata:audit:timecreated',
         ], 'privacy:metadata:audit');
         $collection->add_database_table('webservice_mcp_preapproval', [
@@ -189,7 +190,7 @@ class provider implements
             'webservice_mcp_audit',
             ['userid' => $userid],
             'timecreated ASC',
-            'id, action, toolname, mutating, outcome, detailcode, timecreated'
+            'id, action, toolname, mutating, outcome, detailcode, detail, timecreated'
         );
         if ($audit) {
             $writer->export_data(array_merge($base, [get_string('privacy:path:audit', 'webservice_mcp')]), (object)[
@@ -199,6 +200,7 @@ class provider implements
                     'mutating' => transform::yesno($record->mutating),
                     'outcome' => $record->outcome,
                     'detail' => $record->detailcode,
+                    'message' => $record->detail,
                     'timecreated' => transform::datetime($record->timecreated),
                 ], $audit)),
             ]);

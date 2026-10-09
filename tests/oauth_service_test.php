@@ -751,4 +751,43 @@ final class oauth_service_test extends advanced_testcase {
         $used = $DB->get_field('webservice_mcp_oauth_code', 'used', ['code' => credential_manager::hash_token($code)]);
         $this->assertSame(1, (int)$used);
     }
+
+    /**
+     * A refresh token from before token families (familyid NULL) still gets grace-period pairs for concurrent
+     * refreshes, in the family its first refresh starts; reuse after the window revokes that family.
+     */
+    public function test_legacy_refresh_token_gets_family_and_grace(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+        $this->create_mcp_user();
+        $oauth = new oauth_service();
+        $registration = $this->register($oauth);
+        $clientid = $registration['client_id'];
+        $legacy = $this->exchange($oauth, $clientid, $this->authorize($oauth, $clientid));
+
+        // Make both tokens look like pre-0.9.0 rows.
+        $DB->set_field('webservice_mcp_credential', 'familyid', null);
+        $DB->set_field('webservice_mcp_credential', 'familycreated', null);
+        $manager = new credential_manager();
+        $legacyrow = $manager->find_credential($legacy['refresh_token']);
+
+        $first = $this->refresh($oauth, $clientid, $legacy['refresh_token']);
+        $family = (string)$manager->find_credential($first['access_token'])->familyid;
+        $this->assertNotSame('', $family);
+        $this->assertSame($family, (string)$manager->find_credential($legacy['refresh_token'])->familyid);
+        $this->assertSame((int)$legacyrow->timecreated, (int)$manager->find_credential($first['access_token'])->familycreated);
+
+        // A concurrent refresh with the same legacy token, inside the window: a new pair in the same family.
+        $second = $this->refresh($oauth, $clientid, $legacy['refresh_token']);
+        $this->assertSame($family, (string)$manager->find_credential($second['access_token'])->familyid);
+        $this->assertNotNull($manager->resolve_credential($first['access_token']));
+        $this->assertNotNull($manager->resolve_credential($second['access_token']));
+
+        // Outside the window the reuse is theft: the whole family is revoked.
+        $DB->set_field('webservice_mcp_credential', 'rotatedat', time() - 31, ['id' => $legacyrow->id]);
+        $this->assert_oauth_error('invalid_grant', fn() => $this->refresh($oauth, $clientid, $legacy['refresh_token']));
+        $this->assertNull($manager->resolve_credential($first['access_token']));
+        $this->assertNull($manager->resolve_credential($second['refresh_token']));
+    }
 }

@@ -31,6 +31,7 @@ use webservice_mcp\local\mcp\dispatcher;
  * @covers      \webservice_mcp\local\tool_provider
  * @covers      \webservice_mcp\local\wrapper\builtin_definitions
  * @covers      \webservice_mcp\local\wrapper\gateway_definitions
+ * @covers      \webservice_mcp\local\wrapper\arguments
  */
 final class tool_annotations_test extends advanced_testcase {
     /** Tools that cannot change anything. */
@@ -141,5 +142,39 @@ final class tool_annotations_test extends advanced_testcase {
         $this->assertFalse($tools['wrapper_moodle_api_execute']['annotations']['readOnlyHint']);
         $this->assertTrue($tools['core_course_delete_courses']['annotations']['destructiveHint']);
         $this->assertSame('Course: get contents', $tools['core_course_get_contents']['title']);
+    }
+
+    /**
+     * Invalid wrapper input reaches the client as a tool error that explains what is wrong and what is accepted.
+     */
+    public function test_invalid_input_error_explains_itself(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+
+        $course = $this->getDataGenerator()->create_course();
+        $page = $this->getDataGenerator()->create_module('page', ['course' => $course->id]);
+        $ctx = new call_context(
+            call_context::ERA_MODERN,
+            '2026-07-28',
+            get_admin(),
+            context_system::instance(),
+            null,
+            true,
+            'connector'
+        );
+        $dispatcher = new dispatcher($ctx, static fn(string $name, array $arguments): array =>
+            \webservice_mcp\local\mcp\tool_runner::run($name, $arguments, $ctx));
+
+        $result = $dispatcher->dispatch('tools/call', [
+            'name' => 'wrapper_course_set_module_visibility',
+            'arguments' => ['courseid' => $course->id, 'cmids' => [$page->cmid], 'visibility' => 'invisible'],
+        ]);
+
+        $this->assertTrue($result['isError']);
+        $this->assertSame('wrapper:invalidinput', $result['_meta']['org.moodle/errorcode']);
+        $this->assertStringContainsString(
+            'Unknown visibility "invisible"; use show, hide or stealth.',
+            $result['content'][0]['text']
+        );
     }
 }

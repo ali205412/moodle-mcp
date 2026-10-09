@@ -60,10 +60,28 @@ class logger {
             'mutating' => !empty($event['mutating']) ? 1 : 0,
             'outcome' => (string)($event['outcome'] ?? 'success'),
             'detailcode' => $event['detailcode'] ?? null,
+            'detail' => null,
             'auditid' => $auditid,
         ];
+        if ($record->outcome !== 'success') {
+            $record->detail = self::clean_detail($event['detail'] ?? null);
+        }
 
         $DB->insert_record(self::TABLE, $record);
         return $auditid;
+    }
+
+    /**
+     * Reduce an error message to one line of at most 255 characters for storage.
+     *
+     * @param mixed $detail Raw message.
+     * @return string|null
+     */
+    public static function clean_detail(mixed $detail): ?string {
+        if (!is_string($detail)) {
+            return null;
+        }
+        $detail = trim((string)preg_replace('/\s+/u', ' ', $detail));
+        return $detail === '' ? null : \core_text::substr($detail, 0, 255);
     }
 }

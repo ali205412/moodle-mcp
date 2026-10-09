@@ -175,7 +175,10 @@ class manager {
     ): array {
         $definition = $this->find($name);
         if ($definition === null || !$definition->can_discover($restrictedcontext, $user)) {
-            throw new \moodle_exception('invalidparameter');
+            throw arguments::invalid(
+                'Unknown wrapper tool "' . $name
+                . '", or it is not available to you in this context (it needs capabilities you lack here).'
+            );
         }
 
         // Every wrapper validates its target context against this restriction, as native web service calls do.
@@ -442,7 +445,7 @@ class manager {
                 $user,
                 $serviceid
             ),
-            default => throw new \moodle_exception('invalidparameter'),
+            default => throw arguments::invalid('Unknown wrapper tool "' . $name . '".'),
         };
     }
 }
