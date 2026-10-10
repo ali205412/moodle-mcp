@@ -5,6 +5,7 @@ CI_DIR="${CI_DIR:-/opt/moodle-plugin-ci/ci}"
 PLUGIN_DIR="${PLUGIN_DIR:-/plugin}"
 DB="${DB:-mariadb}"
 DB_HOST="${DB_HOST:-mariadb}"
+DB_PORT="${DB_PORT:-}"
 MOODLE_BRANCH="${MOODLE_BRANCH:-MOODLE_402_STABLE}"
 MOODLE_PLUGIN_CI_VERSION="${MOODLE_PLUGIN_CI_VERSION:-^4}"
 TEST_STEPS="${TEST_STEPS:-phplint validate savepoints phpunit}"
@@ -61,6 +62,7 @@ rsync -a \
 moodle-plugin-ci install \
     --plugin "${PLUGIN_COPY_DIR}" \
     --db-host="${DB_HOST}" \
+    ${DB_PORT:+--db-port="${DB_PORT}"} \
     --db-name="${DB_NAME}" \
     --moodle="${MOODLE_DIR}" \
     --data="${DATA_DIR}"

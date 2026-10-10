@@ -19,7 +19,9 @@ declare(strict_types=1);
 namespace webservice_mcp\local\wrapper;
 
 use context;
+use context_module;
 use core_external\external_api;
+use core_question\local\bank\question_bank_helper;
 use stdClass;
 
 /**
@@ -61,6 +63,13 @@ class question_category_service {
 
         if ($name === '') {
             throw new \moodle_exception('categorynamecantbeblank', 'question');
+        }
+
+        $bankcontext = $this->resolve_bank_context($context);
+        if ((int)$bankcontext->id !== (int)$context->id) {
+            external_api::validate_context($bankcontext);
+            \require_capability('moodle/question:managecategory', $bankcontext);
+            $contextid = (int)$bankcontext->id;
         }
 
         $parentcategoryid ??= (int)\question_get_top_category($contextid, true)->id;
@@ -232,6 +241,33 @@ class question_category_service {
             'categoryid' => $categoryid,
             'movedquestionids' => array_values(array_map('intval', $questionids)),
         ];
+    }
+
+    /**
+     * Map a requested context to the context that holds its question bank.
+     *
+     * Moodle 5.0+ (MDL-71378) keeps questions only in module contexts. Like core's importer
+     * (question/format.php), course and system requests use the course's (or site's) default
+     * system-type mod_qbank instance, created on demand. Older Moodle keeps the context as is.
+     *
+     * @param context $context Requested context.
+     * @return context
+     */
+    private function resolve_bank_context(context $context): context {
+        if (!class_exists(question_bank_helper::class) || (int)$context->contextlevel === CONTEXT_MODULE) {
+            return $context;
+        }
+
+        if ((int)$context->contextlevel === CONTEXT_SYSTEM) {
+            $course = \get_site();
+        } else if ((int)$context->contextlevel === CONTEXT_COURSE) {
+            $course = \get_course((int)$context->instanceid);
+        } else {
+            throw arguments::invalid('Question banks need a system, course or module context id on this Moodle version.');
+        }
+
+        $qbank = question_bank_helper::get_default_open_instance_system_type($course, true);
+        return context_module::instance((int)$qbank->id);
     }
 
     /**

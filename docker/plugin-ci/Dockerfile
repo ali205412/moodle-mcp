@@ -1,6 +1,8 @@
+ARG PHP_VERSION=8.2
+
 FROM composer:2 AS composer
 FROM node:20-bookworm-slim AS node20
-FROM php:8.2-cli-bookworm AS node22
+FROM php:${PHP_VERSION}-cli-bookworm AS node22
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -11,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && curl -fsSL https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.xz \
     | tar -xJ --strip-components=1 -C /opt/node22
 
-FROM php:8.2-cli-bookworm
+FROM php:${PHP_VERSION}-cli-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     COMPOSER_ALLOW_SUPERUSER=1 \

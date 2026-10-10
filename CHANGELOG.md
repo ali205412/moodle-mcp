@@ -1,6 +1,13 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Version 0.10.1 (2026101101)
+- Moodle 5.0–5.3 compatibility: question-bank wrappers resolve the course's default `mod_qbank` bank on 5.x (course
+  question banks moved into qbank activities); manual badge award/revoke use `\core_badges\award_manager` on 5.2+
+  (`badges/lib/awardlib.php` was removed); section edits pass the `returnurl` the 5.2+ form expects.
+- Test harness: `PHP_VERSION`, `MARIADB_PORT`/`POSTGRES_PORT` so suites run in parallel per Moodle branch. Verified
+  350/350 on Moodle 4.2, 4.5 and 5.3.
+
 ## Version 0.10.0 (2026101100)
 - UI bridge: Claude can use any Moodle page as the signed-in user, including the ~395 installed plugins with no API
   (blocks, reports, admin tools, course formats, local plugins) and admin pages for site admins:

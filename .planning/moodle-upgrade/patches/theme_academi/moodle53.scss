@@ -1,0 +1,41 @@
+// Moodle 5.3 compatibility for Academi v5.2 (local patch until Academi ships a 5.3 release).
+
+// Drawer toggles: Boost pins them just below a standard navbar; Academi's header is two rows (180px).
+.drawer-toggles .drawer-toggler,
+.pagelayout-standard .drawer-toggles .drawer-toggler,
+body.limitedwidth .drawer-toggles .drawer-toggler {
+    top: calc(180px + 1rem);
+}
+
+// Design-system components (e.g. the edit-mode switch) default to Noto Sans, which Academi does not load.
+.mds-switch,
+.mds-switch-label {
+    font-family: inherit;
+}
+
+// Centred login card, as on Moodle 4.5 (5.3 dropped these rules with its split-screen login).
+.pagelayout-login #region-main {
+    border: 0;
+    background-color: inherit;
+}
+.pagelayout-login #page {
+    background: linear-gradient(to right, $gray-100 0%, $gray-300 100%);
+}
+.pagelayout-login .login-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+}
+.pagelayout-login .login-container {
+    background-color: $white;
+    padding: 3rem;
+    box-shadow: $box-shadow;
+    margin-bottom: 2rem;
+    border-radius: $border-radius;
+}
+@include media-breakpoint-up(md) {
+    .pagelayout-login .login-container {
+        width: 500px !important; /* stylelint-disable-line declaration-no-important */
+    }
+}

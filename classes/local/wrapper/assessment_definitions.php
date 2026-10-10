@@ -63,7 +63,8 @@ final class assessment_definitions {
             defs::def(
                 'wrapper_question_create_category',
                 'Create question category',
-                'Create a question-bank category in a context (system, category, course or module context id).',
+                'Create a question-bank category in a context (system, category, course or module context id). '
+                    . 'On Moodle 5.0+ system and course ids map to the default question bank activity of the site or course.',
                 ['moodle/question:managecategory'],
                 defs::obj(
                     ['contextid' => defs::id('Context id.'), 'name' => ['type' => 'string'],

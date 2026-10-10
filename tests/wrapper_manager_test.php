@@ -180,6 +180,11 @@ final class wrapper_manager_test extends advanced_testcase {
         $user = $this->getDataGenerator()->create_user();
         $roleid = $this->getDataGenerator()->create_role();
         assign_capability('moodle/question:managecategory', CAP_ALLOW, $roleid, context_system::instance());
+        // Moodle 5.0+ keeps question banks in hidden mod_qbank activities, which core opens only to these capabilities.
+        assign_capability('moodle/course:viewhiddenactivities', CAP_ALLOW, $roleid, context_system::instance());
+        if (get_capability_info('mod/qbank:view')) {
+            assign_capability('mod/qbank:view', CAP_ALLOW, $roleid, context_system::instance());
+        }
         role_assign($roleid, $user->id, context_system::instance());
         accesslib_clear_all_caches_for_unit_testing();
         $this->setUser($user);

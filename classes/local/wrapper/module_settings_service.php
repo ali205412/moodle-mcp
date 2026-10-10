@@ -168,6 +168,7 @@ class module_settings_service {
             'cs' => $sectioninfo,
             'editoroptions' => $editoroptions,
             'defaultsectionname' => $courseformat->get_default_section_name($sectioninfo),
+            'returnurl' => null, // Read unconditionally by the Moodle 5.2+ form.
         ]);
         $initial = \convert_to_array($sectioninfo);
         if (!empty($CFG->enableavailability)) {

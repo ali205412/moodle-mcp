@@ -161,10 +161,10 @@ final class ui_page_parser_test extends advanced_testcase {
         $url = (new \moodle_url('/admin/settings.php', ['section' => 'sitepolicies']))->out(false);
         $form = self::form(page_parser::parse(ui_page_builder::admin_settings('sitepolicies'), $url), '/admin/settings.php');
         $fields = self::fields($form);
-        $this->assertSame('checkbox', $fields['s__forcelogin']['type']);
-        $this->assertSame('0', $fields['s__forcelogin']['uncheckedvalue']);
-        $this->assertSame('Force users to log in', $fields['s__forcelogin']['label']);
-        $this->assertStringContainsString('Default:', $fields['s__forcelogin']['help']);
+        $this->assertSame('checkbox', $fields['s__allowobjectembed']['type']);
+        $this->assertSame('0', $fields['s__allowobjectembed']['uncheckedvalue']);
+        $this->assertSame('Allow EMBED and OBJECT tags', $fields['s__allowobjectembed']['label']);
+        $this->assertStringContainsString('Default:', $fields['s__allowobjectembed']['help']);
         $this->assertSame('text', $fields['s__minpasswordlength']['type']);
         $this->assertSame('password', $fields['s__cronremotepassword']['type']);
         $this->assertSame('', $fields['s__cronremotepassword']['value']);

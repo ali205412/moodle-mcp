@@ -198,8 +198,8 @@ final class ui_form_submitter_test extends advanced_testcase {
             (new \moodle_url('/admin/settings.php', ['section' => 'sitepolicies']))->out(false)
         );
         $form = array_values(array_filter($page['forms'], fn($f) => strpos($f['action'], '/admin/settings.php') !== false))[0];
-        $fields = form_submitter::build($form, ['s__forcelogin' => true, 'Protect usernames' => 'no'])['fields'];
-        $this->assertSame('1', $fields['s__forcelogin']);
+        $fields = form_submitter::build($form, ['s__allowobjectembed' => true, 'Protect usernames' => 'no'])['fields'];
+        $this->assertSame('1', $fields['s__allowobjectembed']);
         $this->assertSame('0', $fields['s__protectusernames']);
         $this->assertSame('sitepolicies', $fields['section']);
         $this->assertArrayNotHasKey('s__cronremotepassword', $fields);

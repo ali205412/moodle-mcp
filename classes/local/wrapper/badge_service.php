@@ -279,7 +279,6 @@ class badge_service {
     public function award_badge(int $badgeid, int $recipientid, ?int $issuerroleid = null): array {
         global $CFG, $USER;
         moodle_lib::load('lib/badgeslib.php');
-        moodle_lib::load('badges/lib/awardlib.php');
 
         $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
@@ -292,7 +291,7 @@ class badge_service {
         $this->require_valid_recipient($badge, $recipientid);
 
         $resolvedroleid = $this->resolve_manual_issuer_role($badge, $issuerroleid);
-        $awarded = \process_manual_award($recipientid, (int)$USER->id, $resolvedroleid, $badgeid);
+        $awarded = $this->manual_award('process_manual_award', $recipientid, (int)$USER->id, $resolvedroleid, $badgeid);
         if ($awarded && isset($badge->criteria[BADGE_CRITERIA_TYPE_MANUAL])) {
             \badges_award_handle_manual_criteria_review((object)[
                 'crit' => $badge->criteria[BADGE_CRITERIA_TYPE_MANUAL],
@@ -310,6 +309,26 @@ class badge_service {
     }
 
     /**
+     * Run a manual award or revoke through whichever API this Moodle version provides.
+     *
+     * Moodle 5.2 moved these functions into \core_badges\award_manager and removed badges/lib/awardlib.php.
+     *
+     * @param string $operation process_manual_award or process_manual_revoke.
+     * @param int $recipientid Recipient user id.
+     * @param int $issuerid Issuer user id.
+     * @param int $issuerroleid Issuer role id.
+     * @param int $badgeid Badge id.
+     * @return bool
+     */
+    private function manual_award(string $operation, int $recipientid, int $issuerid, int $issuerroleid, int $badgeid): bool {
+        if (class_exists(\core_badges\award_manager::class)) {
+            return \core_badges\award_manager::$operation($recipientid, $issuerid, $issuerroleid, $badgeid);
+        }
+        moodle_lib::load('badges/lib/awardlib.php');
+        return (bool)$operation($recipientid, $issuerid, $issuerroleid, $badgeid);
+    }
+
+    /**
      * Revoke a manually awarded badge.
      *
      * @param int $badgeid Badge id.
@@ -320,7 +339,6 @@ class badge_service {
     public function revoke_badge(int $badgeid, int $recipientid, ?int $issuerroleid = null): array {
         global $CFG, $USER;
         moodle_lib::load('lib/badgeslib.php');
-        moodle_lib::load('badges/lib/awardlib.php');
 
         $badge = $this->load_badge($badgeid);
         $context = $badge->get_context();
@@ -328,7 +346,7 @@ class badge_service {
         \require_capability('moodle/badges:revokebadge', $context);
 
         $resolvedroleid = $this->resolve_manual_issuer_role($badge, $issuerroleid);
-        $revoked = \process_manual_revoke($recipientid, (int)$USER->id, $resolvedroleid, $badgeid);
+        $revoked = $this->manual_award('process_manual_revoke', $recipientid, (int)$USER->id, $resolvedroleid, $badgeid);
 
         return [
             'badgeid' => $badgeid,

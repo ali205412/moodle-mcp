@@ -1,0 +1,26 @@
+{{!
+    @template core/login_layout
+
+    Academi override: keep the centred single-column login used on Moodle 4.5
+    instead of Moodle 5.3's split-screen layout with the generic welcome panel.
+
+    Example context (json):
+    {
+        "output": {
+            "main_content": "<h1>Login form goes here</h1>"
+        }
+    }
+}}
+<div class="container-fluid pt-5">
+    <div id="page-content" class="row">
+        <div id="region-main-box" class="col-12">
+            <div id="region-main" class="col-12 h-100">
+                <div class="login-wrapper">
+                    <div class="login-container">
+                        {{{ output.main_content }}}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

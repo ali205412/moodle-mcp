@@ -1,0 +1,28 @@
+--- a/scss/includes.scss
++++ b/scss/includes.scss
+@@ -94,12 +94,18 @@
+ $font_weight: var(--fa-style, 900);
+ $fontsize: 16px !default;
+ 
++// Moodle 5.3 design-system tokens and font stack (Boost imports these first).
++@import "design-system";
++@import "moodle/font-stack";
++
+ // Import FontAwesome.
+ @import "fontawesome";
+ 
+ // Import All of Bootstrap
+ @import "bootstrap";
+ 
++@import "moodle/font-stack-lang";
++
+ // Import Core moodle CSS
+ @import "moodle";
+ 
+@@ -135,3 +141,6 @@
+ 
+ // Init the theme style rules.
+ @import 'theme';
++
++// Moodle 5.3 compatibility.
++@import "moodle53";
