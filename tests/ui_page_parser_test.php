@@ -380,4 +380,17 @@ final class ui_page_parser_test extends advanced_testcase {
             $this->assertSame($expected, page_parser::resolve($href, $base), $href);
         }
     }
+
+    /**
+     * Data tables hidden with d-none until JavaScript sizes them (the grader report) are still read; other d-none content is not.
+     */
+    public function test_js_revealed_tables_are_read(): void {
+        $html = '<html><body><div id="region-main"><div class="d-none">Hidden notice</div>'
+            . '<div class="gradeparent"><table class="table gradereport-grader-table d-none" id="user-grades">'
+            . '<tr><th>Student</th><th>Essay 1</th></tr><tr><td>Ana Lopez</td><td>80.00</td></tr></table></div>'
+            . '</div></body></html>';
+        $text = page_parser::parse($html, 'https://example.com/grade/report/grader/index.php?id=2')['text'];
+        $this->assertStringContainsString('| Ana Lopez | 80.00 |', $text);
+        $this->assertStringNotContainsString('Hidden notice', $text);
+    }
 }

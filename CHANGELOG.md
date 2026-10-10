@@ -1,6 +1,10 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Version 0.11.1 (2026101201)
+- Page reader reads data tables that Moodle hides with `d-none` until JavaScript sizes them, so the grader report
+  returns its grades (verified on production: 25 rows for a real course). Other `d-none` content stays hidden.
+
 ## Version 0.11.0 (2026101200)
 - Page reader: content inside forms is now part of `moodle_page_view` text (tables, headings, lists, links with ids,
   compact `[type: name="value"]` inputs; selects show only the chosen option; hidden/password values never shown),

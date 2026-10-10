@@ -645,8 +645,15 @@ class page_parser {
         $classes = preg_split('/\s+/', trim($el->getAttribute('class')));
         foreach (self::HIDDEN_CLASSES as $hidden) {
             if (in_array($hidden, $classes, true)) {
+                if ($hidden !== 'd-none') {
+                    return true;
+                }
+                // Data tables hidden with d-none are revealed by JavaScript once sized (e.g. the grader report).
+                if ($el->tagName === 'table') {
+                    return false;
+                }
                 // Responsive utilities: d-none d-md-block is visible on desktops.
-                return $hidden !== 'd-none' || !preg_grep('/^d-(sm|md|lg|xl)-(block|inline|inline-block|flex|table)$/', $classes);
+                return !preg_grep('/^d-(sm|md|lg|xl)-(block|inline|inline-block|flex|table)$/', $classes);
             }
         }
         return false;
