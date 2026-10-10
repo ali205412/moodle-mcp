@@ -117,3 +117,15 @@ and Lightbox 4.5.4, and plan the next upgrade before 2027-04-19.
   Maintenance ~4 min (a root-owned `.git` log file blocked the first git step; fixed with `chown -R nginx:nginx .git`).
   Checks: pages/login OK, cron running, 0 PHP fatals, MCP production smoke test all passed.
   Rollback: maintenance on → `git reset --hard fb02f4fa9f2` → restore `moodledb.sql.gz` → maintenance off.
+- 2026-10-10 12:07–12:15 UTC: production cut over to **Moodle 5.3 LTS** (`/root/moodle53-cutover.sh`), PHP 8.1 → 8.3.35,
+  MySQL 8.0.46 → 8.4.11 (Oracle repo, key `RPM-GPG-KEY-mysql-2025`; the 2023 key has expired). Maintenance ~7.5 min.
+  Everything rehearsed first on a full staging copy on the server (`/srv/moodle-staging`, isolated docker network).
+  - Plugins: Tiles = leonstr fork, Lightbox 4.5.4, Academi v5.2 + local patches, Microsoft suite 5.2.x + `local_o365`
+    one-line patch, mod_chat/mod_survey from moodlehq (data kept). Atto removed by core. See `patches/README.md`.
+  - MySQL tuning added: `/etc/mysql/mysql.conf.d/zz-moodle.cnf` (4G buffer pool, 3-day binlog expiry, native auth on).
+  - Router left unconfigured (`routerconfigured=false`, reached via `/r.php`); nginx root now `/var/www/html/moodle/public`.
+  - Checks: 0 PHP fatals, Microsoft sign-in redirect OK, MCP production smoke 21/21, parent-app web services identical
+    to 4.5 (11 ok / 6 refused / 1 crash, all pre-existing), qbank migration done (147 questions moved).
+  - Backup + rollback: `/var/backups/moodle53-cutover-20261010-1207/` (DB dump, MySQL 8.0 datadir tar, configs);
+    old code at `/var/www/moodle45-old`; one command: `sudo /root/moodle53-rollback.sh`.
+  - Revisit when vendors ship 5.3 builds: Academi (drop local patches), Tiles (official), Microsoft suite (drop o365 patch).
