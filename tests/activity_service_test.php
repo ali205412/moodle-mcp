@@ -193,7 +193,7 @@ final class activity_service_test extends advanced_testcase {
 
         $service = new activity_service();
         $created = [
-            'page' => [],
+            'page' => ['page' => ['text' => '<p>Page body</p>', 'format' => FORMAT_HTML]],
             'url' => ['externalurl' => 'https://moodle.org'],
             'label' => [],
             'resource' => ['files' => $draftitemid],

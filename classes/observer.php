@@ -82,6 +82,21 @@ class observer {
     }
 
     /**
+     * End the UI bridge session of a credential family that has no active credential left.
+     *
+     * @param base $event credential_revoked event.
+     * @return void
+     */
+    public static function credential_revoked(base $event): void {
+        global $DB;
+
+        $credential = $DB->get_record('webservice_mcp_credential', ['id' => $event->objectid]);
+        if ($credential) {
+            \webservice_mcp\local\ui\session_bridge::end_session_for_credential($credential);
+        }
+    }
+
+    /**
      * Revoke all credentials and burn pending authorization codes of a user.
      *
      * @param int $userid Affected user.

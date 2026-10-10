@@ -190,12 +190,79 @@ async function raw() {
   check('[http legacy] tasks/result returns the tool result', Array.isArray(done.result?.content), JSON.stringify(done).slice(0, 200));
 }
 
+// UI bridge: act through real Moodle pages as each user (nested loopback requests through the dev server).
+async function bridge() {
+  const teacher = await connect('v2', 'auto', 'teacher');
+  const student = await connect('v2', 'auto', 'student');
+  const admin = await connect('v2', 'auto', 'admin');
+  const text = (r) => (r.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+  const names = (await teacher.listTools()).tools.map((t) => t.name);
+  check('[bridge] tools listed', ['moodle_page_view', 'moodle_page_action', 'moodle_page_submit'].every((n) => names.includes(n)));
+
+  const course = await teacher.callTool({ name: 'moodle_page_view', arguments: { url: `/course/view.php?id=${seed.courseid}` } });
+  const page = sc(course);
+  check('[bridge] teacher views the course page', !course.isError && /E2E Biology/.test(page.title ?? ''), text(course).slice(0, 300));
+  const pagelink = (page.links ?? []).find((l) => /mod\/page\/view\.php/.test(l.url));
+  check('[bridge] course page lists the page activity link', Boolean(pagelink), JSON.stringify(page.links ?? []).slice(0, 300));
+  check('[bridge] sesskey never leaves the server', !/sesskey=[A-Za-z0-9]{10}/.test(JSON.stringify(course)));
+
+  const cmid = pagelink ? new URL(pagelink.url).searchParams.get('id') : '0';
+  const edit = await teacher.callTool({ name: 'moodle_page_view', arguments: { url: `/course/modedit.php?update=${cmid}` } });
+  const form = (sc(edit).forms ?? []).find((f) => (f.fields ?? []).some((x) => x.name === 'name'));
+  check('[bridge] activity settings form parsed', Boolean(form) && form.fields.find((x) => x.name === 'name').value === 'Welcome page',
+    text(edit).slice(0, 300));
+  const saved = await teacher.callTool({ name: 'moodle_page_submit', arguments: {
+    url: `/course/modedit.php?update=${cmid}`, form: form?.id ?? 'F1', fields: { name: 'Welcome page (edited)' } } });
+  check('[bridge] form submitted without validation errors', !saved.isError
+    && !(sc(saved).alerts ?? []).some((a) => a.type === 'error'), text(saved).slice(0, 400));
+  const contents = sc(await teacher.callTool({ name: 'wrapper_moodle_api_execute', arguments: {
+    functionname: 'core_course_get_contents', params: { courseid: seed.courseid } } }));
+  check('[bridge] rename really saved in Moodle', JSON.stringify(contents).includes('Welcome page (edited)'));
+
+  const sesskeyview = await teacher.callTool({ name: 'moodle_page_view', arguments: {
+    url: `/course/mod.php?hide=${cmid}&sesskey={sesskey}` } });
+  check('[bridge] state-changing link refused by page_view', sesskeyview.isError && /moodle_page_action/.test(text(sesskeyview)));
+  const hide = await teacher.callTool({ name: 'moodle_page_action', arguments: { url: `/course/mod.php?hide=${cmid}&sesskey={sesskey}` } });
+  const after = sc(await teacher.callTool({ name: 'wrapper_moodle_api_execute', arguments: {
+    functionname: 'core_course_get_course_module', params: { cmid: Number(cmid) } } }));
+  check('[bridge] action link hid the activity', !hide.isError && Number((after.result ?? after).data?.cm?.visible) === 0,
+    `${text(hide).slice(0, 200)} ${JSON.stringify(after).slice(0, 200)}`);
+
+  const denied = await student.callTool({ name: 'moodle_page_view', arguments: { url: `/course/edit.php?id=${seed.courseid}` } });
+  check('[bridge] student refused the course settings page by Moodle', /permission|not allowed|cannot/i.test(text(denied)),
+    text(denied).slice(0, 300));
+
+  for (const url of ['/login/logout.php', '/webservice/mcp/server.php', '/admin/tool/mobile/autologin.php']) {
+    const r = await admin.callTool({ name: 'moodle_page_view', arguments: { url } });
+    check(`[bridge] policy refuses ${url}`, r.isError && /uibridgeurldenied/.test(text(r) + JSON.stringify(r._meta ?? {})), text(r).slice(0, 200));
+  }
+  const offsite = await admin.callTool({ name: 'moodle_page_view', arguments: { url: 'https://example.com/' } });
+  check('[bridge] policy refuses other sites', offsite.isError, text(offsite).slice(0, 200));
+
+  const settings = await admin.callTool({ name: 'moodle_page_view', arguments: { url: '/admin/settings.php?section=sitepolicies' } });
+  const adminform = (sc(settings).forms ?? []).find((f) => (f.fields ?? []).some((x) => x.name === 's__maxeditingtime'));
+  check('[bridge] admin settings page parsed', Boolean(adminform), text(settings).slice(0, 300));
+  const changed = await admin.callTool({ name: 'moodle_page_submit', arguments: { url: '/admin/settings.php?section=sitepolicies',
+    form: adminform?.id ?? 'F1', fields: { s__maxeditingtime: '2700' } } });
+  const reread = sc(await admin.callTool({ name: 'moodle_page_view', arguments: { url: '/admin/settings.php?section=sitepolicies' } }));
+  const value = (reread.forms ?? []).flatMap((f) => f.fields ?? []).find((x) => x.name === 's__maxeditingtime')?.value;
+  check('[bridge] admin setting changed through the page', !changed.isError && String(value) === '2700', `${text(changed).slice(0, 200)} value=${value}`);
+
+  const csv = await teacher.callTool({ name: 'moodle_page_view', arguments: {
+    url: `/report/log/index.php?id=${seed.courseid}&chooselog=1&logreader=logstore_standard&download=csv` } });
+  check('[bridge] report export returned as a saved file', !csv.isError && /^moodle:\/\/file\//.test(sc(csv).file?.uri ?? ''),
+    text(csv).slice(0, 300));
+
+  await Promise.all([teacher.close(), student.close(), admin.close()]);
+}
+
 for (const [sdk, mode] of [['v1', 'legacy'], ['v2', 'legacy'], ['v2', 'auto'], ['v2', 'pin']]) {
   await surfaces(sdk, mode);
 }
 await files();
 await attempt('[cold] all tools', coldcalls);
 await attempt('[http] raw checks', raw);
+await attempt('[bridge] UI bridge', bridge);
 
 console.log(failures === 0 ? '\nALL LIVE CHECKS PASSED' : `\n${failures} LIVE CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

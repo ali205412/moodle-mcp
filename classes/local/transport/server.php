@@ -345,6 +345,25 @@ class server extends legacy_server {
         }
 
         $result = $this->dispatcher($era, $version, $capabilities)->dispatch($method, $params);
+        $this->send_result($this->audit_dispatch_result($method, $result));
+    }
+
+    /**
+     * Audit a dispatcher result and return it as the client may see it.
+     *
+     * Tools may hand the audit a server-side detail in _meta['org.moodle/auditdetail'] (e.g. the page path a UI
+     * bridge call opened); it is stored for successful calls and always removed from the result.
+     *
+     * @param string $method JSON-RPC method.
+     * @param array $result Dispatcher result.
+     * @return array
+     */
+    protected function audit_dispatch_result(string $method, array $result): array {
+        $auditdetail = $result['_meta']['org.moodle/auditdetail'] ?? null;
+        unset($result['_meta']['org.moodle/auditdetail']);
+        if (isset($result['_meta']) && $result['_meta'] === []) {
+            unset($result['_meta']);
+        }
 
         $action = match ($method) {
             'tools/list' => 'discover',
@@ -352,21 +371,22 @@ class server extends legacy_server {
             default => null,
         };
         if ($action !== null && ($result['resultType'] ?? 'complete') === 'complete') {
+            $failed = !empty($result['isError']);
             $auditid = $this->record_audit_event(
                 $action,
                 $action === 'tool_call' ? $this->functionname : null,
                 $action === 'tool_call' && $this->current_request_is_mutating(),
-                empty($result['isError']) ? 'success' : 'error',
+                $failed ? 'error' : 'success',
                 $result['_meta']['org.moodle/errorcode'] ?? null,
-                // The same text the client received for the failed call.
-                empty($result['isError']) ? null : ($result['content'][0]['text'] ?? null)
+                // Failures keep the text the client received; successes keep the tool's server-side detail.
+                $failed ? ($result['content'][0]['text'] ?? null) : (is_string($auditdetail) ? $auditdetail : null)
             );
             if ($auditid) {
                 $result['_meta']['org.moodle/auditId'] = $auditid;
             }
         }
 
-        $this->send_result($result);
+        return $result;
     }
 
     /**
@@ -1094,7 +1114,7 @@ class server extends legacy_server {
      * @param bool $mutating Whether the request mutates state.
      * @param string $outcome Event outcome.
      * @param string|null $detailcode Optional restriction or error code.
-     * @param string|null $detail Optional error message (stored for non-success outcomes only).
+     * @param string|null $detail Optional detail: the error message, or a tool-supplied detail for successes.
      * @return string|null
      */
     protected function record_audit_event(

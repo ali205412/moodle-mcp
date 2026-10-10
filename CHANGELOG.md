@@ -1,6 +1,23 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Version 0.10.0 (2026101100)
+- UI bridge: Claude can use any Moodle page as the signed-in user, including the ~395 installed plugins with no API
+  (blocks, reports, admin tools, course formats, local plugins) and admin pages for site admins:
+  - `moodle_page_view` returns the page's text, alerts, tabs, numbered links and every form field (labels, values,
+    options, editors, dates, file pickers); `moodle_page_action` follows state-changing links; `moodle_page_submit`
+    fills in and submits forms with Moodle's own validation and permission checks; files and exports the page returns
+    are saved to the user's draft area
+  - real Moodle sessions created by `complete_user_login` from one-time loopback-bound keys (30 s); per-connection
+    session cache, killed on revocation; same-origin URL policy with deny list and re-checked redirects; GET needs
+    read scope, POST or sesskey links need write scope; course-restricted tokens are refused; sesskey never leaves the
+    server; two concurrent fetches site-wide; page path recorded in the audit log
+  - setting `uibridge`, capability `webservice/mcp:uibridge`
+- 15 targeted tools mirroring UI pages' own checks: activity settings get/update (module form validation), section
+  update, admin settings search/get/set (per-setting validation, config log), role overrides get/set (override /
+  safeoverride rules), enrolment method add/update/delete/status, logs and participation reports, course reset
+- Activity creation now runs the module form's full validation (required fields enforced as in the UI)
+
 ## Version 0.9.5 (2026101011)
 - Moodle Explorer (MCP App) redesign, audited screen by screen in the MCP Apps reference host:
   - "Ask Claude" works in SDK hosts (`ui/message` content is an array per the spec types); per-file "Ask Claude"

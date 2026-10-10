@@ -241,6 +241,12 @@ final class wrapper_manager_test extends advanced_testcase {
             'wrapper_question_preview_question',
             'wrapper_module_read_data',
             'wrapper_memory_read',
+            'wrapper_course_get_module_settings',
+            'wrapper_admin_search_settings',
+            'wrapper_admin_get_settings',
+            'wrapper_role_get_overrides',
+            'wrapper_report_logs',
+            'wrapper_report_participation',
         ];
 
         foreach ($manager->all() as $definition) {

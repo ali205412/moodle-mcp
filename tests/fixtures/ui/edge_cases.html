@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>Edge cases | Test site</title>
+<base href="https://moodle.example.org/sub/mod/forum/">
+<script>M.cfg = {"wwwroot":"https:\/\/moodle.example.org\/sub","sesskey":"abcDEF1234"};</script>
+<style>.x { color: red; }</style>
+</head>
+<body>
+<nav class="navbar"><a href="/sub/my/">Dashboard</a></nav>
+<div id="page-header"><nav aria-label="Navigation bar"><ol class="breadcrumb">
+<li class="breadcrumb-item"><a href="../../course/view.php?id=7">PHY 2</a></li>
+<li class="breadcrumb-item"><a href="view.php?id=31" aria-current="page">News</a></li>
+<li class="breadcrumb-item"><span>Edit</span></li>
+</ol></nav>
+<div class="page-header-headings"><h1 class="h2">Physics 2</h1></div></div>
+<div class="secondary-navigation"><nav class="moremenu"><ul class="nav more-nav nav-tabs">
+<li class="nav-item"><a class="nav-link active" aria-current="true" href="view.php?id=31">Forum</a></li>
+<li class="nav-item"><a class="nav-link" href="/sub/course/modedit.php?update=31">Settings</a></li>
+</ul></nav></div>
+<div id="region-main">
+<span class="notifications" id="user-notifications"><div class="alert alert-warning alert-block fade in alert-dismissible" role="alert">Mind the gap<button type="button" class="close" data-dismiss="alert"><span aria-hidden="true">&times;</span><span class="sr-only">Dismiss this notification</span></button></div></span>
+<div role="main">
+<h2>Overview <span class="sr-only">(screen readers only)</span></h2>
+<p hidden>Never shown</p>
+<p class="d-none">Hidden by CSS</p>
+<p class="d-none d-md-block">Desktop only text</p>
+<p style="display: none">Inline hidden</p>
+<p>Read the <a href="discuss.php?d=5">first discussion</a> or <a href="https://external.example.com/page">an external page</a>.<br>Second line &amp; more.</p>
+<a href="#top">Back to top</a>
+<a href="edit.php?id=31&amp;sesskey=abcDEF1234" title="Edit"><i class="icon fa fa-cog" aria-hidden="true"></i></a>
+<ul>
+<li>Level one
+<ul><li>Level two <a href="../../user/view.php?id=4">Ana</a></li></ul>
+</li>
+<li><img src="pic.png" alt="Diagram of a circuit"> <img class="icon" src="i.png" alt="Icon text"></li>
+</ul>
+<ol><li>First</li><li>Second</li></ol>
+<table class="generaltable"><caption>Scores</caption>
+<thead><tr><th>Name</th><th>Score | points</th></tr></thead>
+<tbody><tr><td>Ana</td><td>9</td></tr><tr><td colspan="2"></td></tr></tbody></table>
+<pre>code   kept
+  as is</pre>
+<form id="edgeform" action="post.php" method="post" enctype="multipart/form-data">
+<fieldset><legend>Reply</legend>
+<input type="hidden" name="sesskey" value="abcDEF1234">
+<input type="hidden" name="d" value="5">
+<label for="subj">Subject</label><input type="text" id="subj" name="subject" value="Re: hello" required>
+<div class="invalid-feedback" id="id_error_subject">Subject is too long</div>
+<label for="pw">Password</label><input type="password" id="pw" name="password" value="secret">
+<select name="mood" aria-label="Mood"><optgroup label="Good"><option value="h">Happy</option><option value="c" selected>Calm</option></optgroup><optgroup label="Bad"><option value="s">Sad</option></optgroup></select>
+<select name="notused"><option value="a">A</option><option value="b">B</option></select>
+<input type="radio" name="size" id="s1" value="s"><label for="s1">Small</label>
+<input type="radio" name="size" id="s2" value="l" checked><label for="s2">Large</label>
+<label><input type="checkbox" name="opts[]" value="red" checked> Red</label>
+<label><input type="checkbox" name="opts[]" value="blue"> Blue</label>
+<label><input type="checkbox" name="agree"> I agree</label>
+<input type="text" name="locked" value="x" disabled>
+<input type="file" name="attachment">
+<textarea name="message" aria-label="Message">Hello
+there</textarea>
+<button>Send</button>
+<button type="submit" name="draft" value="1" class="btn btn-secondary">Save draft</button>
+<button type="button">Preview</button>
+</fieldset>
+</form>
+<input form="edgeform" type="text" name="outside" value="o">
+</div>
+</div>
+<div class="drawer" id="theme_boost-drawers-blocks"><p>Block text not in main</p></div>
+<footer id="page-footer"><form action="/sub/logout.php"><button>Log out</button></form></footer>
+</body>
+</html>

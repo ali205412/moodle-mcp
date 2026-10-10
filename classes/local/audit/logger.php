@@ -60,12 +60,9 @@ class logger {
             'mutating' => !empty($event['mutating']) ? 1 : 0,
             'outcome' => (string)($event['outcome'] ?? 'success'),
             'detailcode' => $event['detailcode'] ?? null,
-            'detail' => null,
+            'detail' => self::clean_detail($event['detail'] ?? null),
             'auditid' => $auditid,
         ];
-        if ($record->outcome !== 'success') {
-            $record->detail = self::clean_detail($event['detail'] ?? null);
-        }
 
         $DB->insert_record(self::TABLE, $record);
         return $auditid;

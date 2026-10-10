@@ -37,4 +37,8 @@ $observers = [
         'eventname' => '\core\event\user_deleted',
         'callback' => '\webservice_mcp\observer::user_deleted',
     ],
+    [
+        'eventname' => '\webservice_mcp\event\credential_revoked',
+        'callback' => '\webservice_mcp\observer::credential_revoked',
+    ],
 ];

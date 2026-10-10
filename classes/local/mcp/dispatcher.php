@@ -19,6 +19,7 @@ declare(strict_types=1);
 namespace webservice_mcp\local\mcp;
 
 use webservice_mcp\local\files\tools as file_tools;
+use webservice_mcp\local\ui\tools as ui_tools;
 use webservice_mcp\local\signer;
 use webservice_mcp\local\tool_provider;
 
@@ -222,7 +223,7 @@ class dispatcher {
 
         $tools = array_merge(apps::tools(), array_map([$this, 'project_tool'], $listed['tools']));
         if ($this->ctx->connector) {
-            $tools = array_merge(file_tools::describe($this->ctx), $tools);
+            $tools = array_merge(file_tools::describe($this->ctx), ui_tools::describe($this->ctx), $tools);
         }
 
         if ($this->ctx->era === call_context::ERA_LEGACY) {
@@ -289,7 +290,7 @@ class dispatcher {
         }
 
         // Connector-only tools are refused before the task branch, so queueing a task can't bypass this.
-        if (file_tools::handles($name) && !$this->ctx->connector) {
+        if ((file_tools::handles($name) || ui_tools::handles($name)) && !$this->ctx->connector) {
             throw new protocol_exception(protocol_exception::INVALID_PARAMS, 'Unknown tool: ' . $name);
         }
 
@@ -306,6 +307,10 @@ class dispatcher {
             if (file_tools::handles($name)) {
                 $this->ctx->require_scope(file_tools::is_mutating($name));
                 return file_tools::execute($name, $arguments, $this->ctx);
+            }
+            if (ui_tools::handles($name)) {
+                $this->ctx->require_scope(ui_tools::is_mutating($name));
+                return ui_tools::execute($name, $arguments, $this->ctx);
             }
 
             $payload = ($this->toolexecutor)($name, $arguments);
@@ -341,6 +346,12 @@ class dispatcher {
                 }
                 return file_tools::execute($name, $arguments, $ctx);
             }
+            if (ui_tools::handles($name)) {
+                if (!$ctx->connector) {
+                    throw new protocol_exception(protocol_exception::INVALID_PARAMS, 'Unknown tool: ' . $name);
+                }
+                return ui_tools::execute($name, $arguments, $ctx);
+            }
             return self::structured_result(tool_runner::run($name, $arguments, $ctx));
         } catch (\Throwable $e) {
             abort_all_db_transactions();
@@ -364,6 +375,9 @@ class dispatcher {
         }
         if (file_tools::handles($name)) {
             return file_tools::is_mutating($name);
+        }
+        if (ui_tools::handles($name)) {
+            return ui_tools::is_mutating($name);
         }
         $wrappers = new \webservice_mcp\local\wrapper\manager();
         if ($this->ctx->connector && $wrappers->find($name) !== null) {

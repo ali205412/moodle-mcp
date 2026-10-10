@@ -278,6 +278,11 @@ class tasks {
             );
             $arguments = json_decode((string)$record->arguments, true) ?: [];
             $result = dispatcher::run_tool($ctx, $record->toolname, $arguments);
+            // Audit-only metadata is server-side; the transport strips it for direct calls, so do the same here.
+            unset($result['_meta']['org.moodle/auditdetail']);
+            if (isset($result['_meta']) && $result['_meta'] === []) {
+                unset($result['_meta']);
+            }
             $record->status = 'completed';
             $record->statusmessage = empty($result['isError']) ? 'Completed.' : 'Completed with a tool error.';
             $record->result = json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);

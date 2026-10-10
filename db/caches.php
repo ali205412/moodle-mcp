@@ -67,4 +67,10 @@ $definitions = [
         'staticacceleration' => true,
         'staticaccelerationsize' => 50,
     ],
+    'uibridge_session' => [
+        'mode' => cache_store::MODE_APPLICATION,
+        'simplekeys' => true,
+        'simpledata' => true,
+        'ttl' => 900,
+    ],
 ];

@@ -34,13 +34,13 @@ final class builtin_definitions {
     public const READ = ['readOnlyHint' => true, 'destructiveHint' => false, 'idempotentHint' => true];
 
     /** Annotations for wrappers that create or update state. */
-    private const WRITE = ['readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => false];
+    public const WRITE = ['readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => false];
 
     /** Annotations for wrappers that update state to an absolute target, so repeating the call is harmless. */
-    private const IDEMPOTENT_WRITE = ['readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => true];
+    public const IDEMPOTENT_WRITE = ['readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => true];
 
     /** Annotations for wrappers that delete or revoke. */
-    private const DESTRUCTIVE = ['readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false];
+    public const DESTRUCTIVE = ['readOnlyHint' => false, 'destructiveHint' => true, 'idempotentHint' => false];
 
     /**
      * Return all built-in definitions.
@@ -50,11 +50,12 @@ final class builtin_definitions {
     public static function all(): array {
         return array_merge(
             self::course_definitions(),
-            self::question_definitions(),
-            self::gradebook_definitions(),
+            assessment_definitions::question_definitions(),
+            assessment_definitions::gradebook_definitions(),
             self::badge_definitions(),
             self::module_and_memory_definitions(),
             gateway_definitions::all(),
+            ui_parity_tools::definitions(),
         );
     }
 
@@ -175,270 +176,6 @@ final class builtin_definitions {
                 ['moodle/course:manageactivities'],
                 self::obj(['courseid' => $courseid, 'cmids' => $cmids], ['courseid', 'cmids']),
                 $state,
-                self::DESTRUCTIVE
-            ),
-        ];
-    }
-
-    /**
-     * Question bank wrappers.
-     *
-     * @return definition[]
-     */
-    private static function question_definitions(): array {
-        $category = self::obj([
-            'categoryid' => ['type' => 'integer'],
-            'contextid' => ['type' => 'integer'],
-            'parentcategoryid' => ['type' => 'integer'],
-            'name' => ['type' => 'string'],
-            'idnumber' => ['type' => ['string', 'null']],
-        ]);
-        $question = [
-            'questionid' => ['type' => 'integer'],
-            'questionbankentryid' => ['type' => 'integer'],
-            'versionid' => ['type' => 'integer'],
-            'version' => ['type' => 'integer'],
-            'status' => ['type' => 'string'],
-            'qtype' => ['type' => 'string'],
-            'categoryid' => ['type' => 'integer'],
-            'contextid' => ['type' => 'integer'],
-            'name' => ['type' => 'string'],
-        ];
-        $payloaddoc = 'Question fields: name, questiontext, questiontextformat, generalfeedback, defaultmark, idnumber, '
-            . 'status (ready|hidden|draft), penalty, hints[]. shortanswer: usecase, answers[{answer, fraction, feedback}]; '
-            . 'truefalse: correctanswer, feedbacktrue, feedbackfalse; essay: responseformat, responserequired, '
-            . 'responsefieldlines, attachments, attachmentsrequired, maxbytes, filetypeslist, graderinfo, responsetemplate.';
-
-        return [
-            self::def(
-                'wrapper_question_create_category',
-                'Create question category',
-                'Create a question-bank category in a context (system, category, course or module context id).',
-                ['moodle/question:managecategory'],
-                self::obj(
-                    ['contextid' => self::id('Context id.'), 'name' => ['type' => 'string'],
-                    'parentcategoryid' => self::id('Parent category id; defaults to the context top category.'),
-                    'info' => ['type' => 'string'], 'infoformat' => ['type' => 'integer'], 'idnumber' => ['type' => 'string']],
-                    ['contextid', 'name']
-                ),
-                $category,
-                self::WRITE
-            ),
-            self::def(
-                'wrapper_question_update_category',
-                'Update question category',
-                'Rename or re-describe a question-bank category, optionally moving it under another parent category.',
-                ['moodle/question:managecategory'],
-                self::obj(['categoryid' => self::id('Category id.'), 'name' => ['type' => 'string'], 'info' => ['type' => 'string'],
-                    'infoformat' => ['type' => 'integer'], 'parentcategoryid' => self::id('New parent category id.'),
-                    'idnumber' => ['type' => 'string']], ['categoryid', 'name']),
-                $category,
-                self::WRITE
-            ),
-            self::def(
-                'wrapper_question_delete_category',
-                'Delete question category',
-                'Delete a question-bank category. If it still holds questions, movequestionstocategoryid is required.',
-                ['moodle/question:managecategory'],
-                self::obj(['categoryid' => self::id('Category id.'),
-                    'movequestionstocategoryid' => self::id('Category receiving remaining questions.')], ['categoryid']),
-                self::obj(['deleted' => ['type' => 'boolean'], 'categoryid' => ['type' => 'integer'],
-                    'movedquestionids' => self::ids('')]),
-                self::DESTRUCTIVE
-            ),
-            self::def(
-                'wrapper_question_move_questions',
-                'Move questions',
-                'Move questions to another question-bank category. Requires the move capability on each question.',
-                [],
-                self::obj(
-                    ['questionids' => self::ids('Question ids.'), 'targetcategoryid' => self::id('Target category id.')],
-                    ['questionids', 'targetcategoryid']
-                ),
-                self::obj(['moved' => ['type' => 'boolean'], 'questionids' => self::ids(''),
-                    'targetcategoryid' => ['type' => 'integer']]),
-                self::IDEMPOTENT_WRITE
-            ),
-            self::def(
-                'wrapper_question_delete_questions',
-                'Delete questions',
-                'Delete questions. Questions still used by a quiz cannot be deleted; Moodle hides them instead '
-                    . '(reported in hiddenquestionids).',
-                [],
-                self::obj(['questionids' => self::ids('Question ids.')], ['questionids']),
-                self::obj(['deleted' => ['type' => 'boolean', 'description' => 'True when every question was deleted.'],
-                    'questionids' => self::ids(''), 'deletedquestionids' => self::ids(''), 'hiddenquestionids' => self::ids('')]),
-                self::DESTRUCTIVE
-            ),
-            self::def(
-                'wrapper_question_create_question',
-                'Create question',
-                'Create a shortanswer, truefalse, essay or description question in a category.',
-                ['moodle/question:add'],
-                self::obj(['categoryid' => self::id('Question category id.'), 'payload' => [
-                    'type' => 'object',
-                    'description' => $payloaddoc,
-                    'properties' => [
-                        'qtype' => ['type' => 'string', 'enum' => ['shortanswer', 'truefalse', 'essay', 'description']],
-                        'name' => ['type' => 'string'],
-                        'questiontext' => ['type' => 'string'],
-                        'generalfeedback' => ['type' => 'string'],
-                        'defaultmark' => ['type' => 'number'],
-                    ],
-                    'required' => ['qtype', 'name', 'questiontext'],
-                ]], ['categoryid', 'payload']),
-                self::obj($question),
-                self::WRITE
-            ),
-            self::def(
-                'wrapper_question_update_question',
-                'Update question',
-                'Save a new version of a supported question. Only the payload fields given are changed.',
-                [],
-                self::obj(
-                    ['questionid' => self::id('Question id.'),
-                    'payload' => ['type' => 'object', 'description' => $payloaddoc]],
-                    ['questionid', 'payload']
-                ),
-                self::obj($question + ['previousquestionid' => ['type' => 'integer']]),
-                self::WRITE
-            ),
-            self::def(
-                'wrapper_question_preview_question',
-                'Question preview URL',
-                'Return the Moodle preview URL for a question the user can use.',
-                [],
-                self::obj(['questionid' => self::id('Question id.')], ['questionid']),
-                self::obj(['questionid' => ['type' => 'integer'], 'previewurl' => ['type' => 'string']]),
-                self::READ
-            ),
-            self::def(
-                'wrapper_question_import_questions',
-                'Import questions',
-                'Import questions into a category from GIFT or Moodle XML text.',
-                ['moodle/question:add'],
-                self::obj(
-                    ['categoryid' => self::id('Question category id.'),
-                    'format' => ['type' => 'string', 'enum' => ['gift', 'xml']],
-                    'content' => ['type' => 'string', 'description' => 'Raw GIFT or Moodle XML content.'],
-                    'catfromfile' => ['type' => 'boolean'], 'contextfromfile' => ['type' => 'boolean']],
-                    ['categoryid', 'format', 'content']
-                ),
-                self::obj(['status' => ['type' => 'boolean'], 'format' => ['type' => 'string'],
-                    'categoryid' => ['type' => 'integer'],
-                    'questionids' => self::ids(''), 'output' => ['type' => 'string']]),
-                self::WRITE
-            ),
-        ];
-    }
-
-    /**
-     * Gradebook wrappers.
-     *
-     * @return definition[]
-     */
-    private static function gradebook_definitions(): array {
-        $item = self::obj([
-            'itemid' => ['type' => 'integer'],
-            'courseid' => ['type' => 'integer'],
-            'itemtype' => ['type' => 'string'],
-            'itemname' => ['type' => 'string'],
-            'parentcategoryid' => ['type' => ['integer', 'null']],
-            'sortorder' => ['type' => 'integer'],
-        ]);
-        $category = self::obj([
-            'categoryid' => ['type' => 'integer'],
-            'courseid' => ['type' => 'integer'],
-            'parentcategoryid' => ['type' => ['integer', 'null']],
-            'name' => ['type' => 'string'],
-            'sortorder' => ['type' => 'integer'],
-        ]);
-        $courseid = self::id('Course id.');
-        $itempayload = ['type' => 'object', 'description' => 'Fields: itemname, idnumber, gradetype (value|scale|text), '
-            . 'scaleid, grademax, grademin, gradepass, parentcategoryid, weightoverride, aggregationcoef, aggregationcoef2, '
-            . 'hidden, hiddenuntil, locked, locktime, rescalegrades (update only).'];
-
-        return [
-            self::def(
-                'wrapper_gradebook_create_manual_item',
-                'Create manual grade item',
-                'Create a manual gradebook item in a course.',
-                ['moodle/grade:manage'],
-                self::obj(['courseid' => $courseid, 'payload' => $itempayload], ['courseid', 'payload']),
-                $item,
-                self::WRITE
-            ),
-            self::def(
-                'wrapper_gradebook_update_manual_item',
-                'Update manual grade item',
-                'Update a manual gradebook item. Only the payload fields given are changed.',
-                ['moodle/grade:manage'],
-                self::obj(
-                    ['courseid' => $courseid, 'itemid' => self::id('Grade item id.'), 'payload' => $itempayload],
-                    ['courseid', 'itemid', 'payload']
-                ),
-                $item,
-                self::WRITE
-            ),
-            self::def(
-                'wrapper_gradebook_move_item',
-                'Move grade item',
-                'Move a manual grade item into another grade category and/or after another grade item.',
-                ['moodle/grade:manage'],
-                self::obj(
-                    ['courseid' => $courseid, 'itemid' => self::id('Grade item id.'),
-                    'parentcategoryid' => self::id('Target grade category id.'),
-                    'afteritemid' => self::id('Place after this item.')],
-                    ['courseid', 'itemid']
-                ),
-                $item,
-                self::WRITE
-            ),
-            self::def(
-                'wrapper_gradebook_delete_items',
-                'Delete manual grade items',
-                'Delete manual gradebook items and their grades.',
-                ['moodle/grade:manage'],
-                self::obj(['courseid' => $courseid, 'itemids' => self::ids('Grade item ids.')], ['courseid', 'itemids']),
-                self::obj(['deleted' => ['type' => 'boolean'], 'itemids' => self::ids('')]),
-                self::DESTRUCTIVE
-            ),
-            self::def(
-                'wrapper_gradebook_update_category',
-                'Update grade category',
-                'Update a gradebook category (name, aggregation, droplow, category total settings).',
-                ['moodle/grade:manage'],
-                self::obj(['courseid' => $courseid, 'categoryid' => self::id('Grade category id.'), 'payload' => [
-                    'type' => 'object',
-                    'description' => 'Fields: fullname, aggregation, aggregateonlygraded, aggregateoutcomes, droplow, '
-                        . 'parentcategoryid, and category total fields itemname, iteminfo, idnumber, gradetype, grademax, '
-                        . 'grademin, gradepass, display, decimals, hiddenuntil, locktime, weightoverride, aggregationcoef2.',
-                ]], ['courseid', 'categoryid', 'payload']),
-                $category,
-                self::WRITE
-            ),
-            self::def(
-                'wrapper_gradebook_move_category',
-                'Move grade category',
-                'Move a gradebook category under another parent and/or after another category or item.',
-                ['moodle/grade:manage'],
-                self::obj(['courseid' => $courseid, 'categoryid' => self::id('Grade category id.'),
-                    'parentcategoryid' => self::id('New parent category id.'),
-                    'aftercategoryid' => self::id('Place after category.'),
-                    'afteritemid' => self::id('Place after grade item.')], ['courseid', 'categoryid']),
-                $category,
-                self::WRITE
-            ),
-            self::def(
-                'wrapper_gradebook_delete_categories',
-                'Delete grade categories',
-                'Delete gradebook categories (not the course category).',
-                ['moodle/grade:manage'],
-                self::obj(
-                    ['courseid' => $courseid, 'categoryids' => self::ids('Grade category ids.')],
-                    ['courseid', 'categoryids']
-                ),
-                self::obj(['deleted' => ['type' => 'boolean'], 'categoryids' => self::ids('')]),
                 self::DESTRUCTIVE
             ),
         ];

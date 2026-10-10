@@ -445,7 +445,8 @@ class manager {
                 $user,
                 $serviceid
             ),
-            default => throw arguments::invalid('Unknown wrapper tool "' . $name . '".'),
+            default => ui_parity_tools::execute($name, $a)
+                ?? throw arguments::invalid('Unknown wrapper tool "' . $name . '".'),
         };
     }
 }

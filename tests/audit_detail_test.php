@@ -37,7 +37,7 @@ require_once(__DIR__ . '/fixtures/testable_transport_server.php');
  */
 final class audit_detail_test extends advanced_testcase {
     /**
-     * The logger stores a single-line, truncated message for non-success outcomes only.
+     * The logger stores the detail it is given as a single, truncated line (callers decide what to pass).
      */
     public function test_logger_stores_detail_for_failures_only(): void {
         global $DB;
@@ -50,7 +50,7 @@ final class audit_detail_test extends advanced_testcase {
             'detailcode' => 'invalidparameter',
             'detail' => "Line one\nline two\r\n" . str_repeat('x', 400),
         ]);
-        $ok = $logger->record(['userid' => 2, 'outcome' => 'success', 'detail' => 'ignored']);
+        $ok = $logger->record(['userid' => 2, 'outcome' => 'success']);
 
         $detail = $DB->get_field('webservice_mcp_audit', 'detail', ['auditid' => $failed]);
         $this->assertStringStartsWith('Line one line two xxx', $detail);
@@ -148,5 +148,61 @@ final class audit_detail_test extends advanced_testcase {
         $server->send_error_for_test(new moodle_exception('invalidtoken', 'webservice'));
         $this->assertSame(2, $DB->count_records('webservice_mcp_audit'));
         $this->resetDebugging();
+    }
+
+    /**
+     * A successful UI bridge tool result stores its page path as the audit detail; the _meta key never reaches the
+     * client.
+     */
+    public function test_bridge_audit_detail_is_stored_and_stripped(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+        $user = $this->getDataGenerator()->create_user();
+        $roleid = $this->getDataGenerator()->create_role();
+        assign_capability('webservice/mcp:use', CAP_ALLOW, $roleid, context_system::instance());
+        role_assign($roleid, $user->id, context_system::instance());
+        accesslib_clear_all_caches_for_unit_testing();
+        $DB->insert_record('external_services', (object)[
+            'name' => 'Bridge audit service',
+            'enabled' => 1,
+            'restrictedusers' => 0,
+            'shortname' => 'bridge_audit_service',
+            'timecreated' => time(),
+        ]);
+
+        $server = new testable_transport_server(WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN);
+        $server->apply_identity_for_test((object)[
+            'user' => $user,
+            'restrictedcontext' => context_system::instance(),
+            'restrictedservice' => 'bridge_audit_service',
+            'scope' => '',
+            'resourceuri' => null,
+            'oauthclientid' => null,
+        ]);
+        $server->set_request_for_test(new request([
+            'jsonrpc' => '2.0',
+            'method' => 'tools/call',
+            'id' => 11,
+            'params' => ['name' => 'moodle_page_view'],
+        ]));
+        $server->set_tool_call_for_test('moodle_page_view', ['url' => '/course/view.php?id=4']);
+
+        $audit = new \ReflectionMethod($server, 'audit_dispatch_result');
+        $audit->setAccessible(true);
+        $result = $audit->invoke($server, 'tools/call', [
+            'content' => [['type' => 'text', 'text' => 'Course 4']],
+            '_meta' => ['org.moodle/auditdetail' => '/moodle/course/view.php'],
+        ]);
+
+        $this->assertArrayNotHasKey('org.moodle/auditdetail', $result['_meta']);
+        $row = $DB->get_record('webservice_mcp_audit', ['auditid' => $result['_meta']['org.moodle/auditId']], '*', MUST_EXIST);
+        $this->assertSame('success', $row->outcome);
+        $this->assertSame('moodle_page_view', $row->toolname);
+        $this->assertSame('/moodle/course/view.php', $row->detail);
+
+        // Without a detail, a success stores none, and an emptied _meta disappears.
+        $plain = $audit->invoke($server, 'resources/list', ['_meta' => ['org.moodle/auditdetail' => '/x']]);
+        $this->assertArrayNotHasKey('_meta', $plain);
     }
 }

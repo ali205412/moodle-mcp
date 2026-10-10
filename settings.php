@@ -71,6 +71,21 @@ if ($hassiteconfig && $settings instanceof admin_settingpage && $ADMIN->fulltree
         1
     ));
 
+    $settings->add(new admin_setting_configcheckbox(
+        'webservice_mcp/uibridge',
+        get_string('settings:uibridge', 'webservice_mcp'),
+        get_string('settings:uibridge_desc', 'webservice_mcp'),
+        1
+    ));
+
+    $settings->add(new admin_setting_configtext(
+        'webservice_mcp/uibridgeloopbackip',
+        get_string('settings:uibridgeloopbackip', 'webservice_mcp'),
+        get_string('settings:uibridgeloopbackip_desc', 'webservice_mcp'),
+        '127.0.0.1',
+        PARAM_RAW_TRIMMED
+    ));
+
     $settings->add(new admin_setting_configtextarea(
         'webservice_mcp/allowedredirecthosts',
         get_string('settings:allowedredirecthosts', 'webservice_mcp'),

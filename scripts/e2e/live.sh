@@ -54,7 +54,7 @@ for who in admin teacher student; do
         --scope=write --output="/data/key-$who.csv" >/dev/null
 done
 
-docker exec -d -e PHP_CLI_SERVER_WORKERS=4 mcp-e2e-web sh -c \
+docker exec -d -e PHP_CLI_SERVER_WORKERS=6 mcp-e2e-web sh -c \
     "php -d log_errors=1 -d error_log=/data/php.log -S 127.0.0.1:${PORT} -t /moodle > /data/server.log 2>&1"
 sleep 2
 

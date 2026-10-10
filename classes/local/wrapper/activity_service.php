@@ -63,11 +63,9 @@ class activity_service {
         string $intro = '',
         int $introformat = FORMAT_HTML
     ): array {
-        global $CFG, $DB;
+        global $DB;
 
-        require_once($CFG->dirroot . '/course/lib.php');
-        require_once($CFG->dirroot . '/course/modlib.php');
-        require_once($CFG->libdir . '/gradelib.php');
+        moodle_lib::load('course/lib.php', 'course/modlib.php', 'lib/gradelib.php');
 
         $context = context_course::instance($courseid);
         external_api::validate_context($context);
@@ -96,11 +94,7 @@ class activity_service {
         }
         [$moduleinfo, $errors] = $this->apply_module_form(\get_course($courseid), $moduleinfo);
         if ($errors !== []) {
-            throw arguments::invalid('Invalid module settings: ' . implode('; ', array_map(
-                static fn(string $field, $message): string => $field . ': ' . strip_tags((string)$message),
-                array_keys($errors),
-                array_values($errors)
-            )));
+            throw form_submission::rejected('module settings', $errors);
         }
 
         // Capability mod/<name>:addinstance and section validity are enforced by create_module().
@@ -129,8 +123,8 @@ class activity_service {
      * @return array
      */
     public function read_module_data(int $cmid): array {
-        global $CFG, $DB;
-        require_once($CFG->dirroot . '/course/lib.php');
+        global $DB;
+        moodle_lib::load('course/lib.php');
 
         [$course, $cm] = \get_course_and_cm_from_cmid($cmid);
         $context = context_module::instance($cm->id);
@@ -223,63 +217,32 @@ class activity_service {
     }
 
     /**
-     * Complete the settings with the module form's defaults and run its validation(), as course/modedit.php does
-     * on submit: form defaults, overlaid with the requested settings, validated, then data_postprocessing().
+     * Complete the settings with the module form's defaults and submit the form, as course/modedit.php does: form
+     * defaults overlaid with the requested settings, cleaned, validated and post-processed by the form's get_data().
      *
      * @param stdClass $course Course record.
      * @param stdClass $moduleinfo Requested module settings.
      * @return array [stdClass complete settings, array field => error message]
      */
     private function apply_module_form(stdClass $course, stdClass $moduleinfo): array {
-        global $CFG;
-
-        $modulename = (string)$moduleinfo->modulename;
-        $formfile = $CFG->dirroot . '/mod/' . $modulename . '/mod_form.php';
-        if (!\core_component::is_valid_plugin_name('mod', $modulename) || !file_exists($formfile)) {
+        [, , $cw, $cm, $defaults] = \prepare_new_moduleinfo_data(
+            $course,
+            (string)$moduleinfo->modulename,
+            (int)$moduleinfo->section
+        );
+        $mform = module_form::create($course, (string)$moduleinfo->modulename, $defaults, (int)$cw->section, $cm);
+        if ($mform === null) {
             // Unknown modules are rejected by create_module() itself.
             return [$moduleinfo, []];
         }
-        require_once($CFG->dirroot . '/course/moodleform_mod.php');
-        require_once($formfile);
 
-        [, , $cw, $cm, $defaults] = \prepare_new_moduleinfo_data($course, $modulename, (int)$moduleinfo->section);
-        $classname = 'mod_' . $modulename . '_mod_form';
-        $mform = new $classname($defaults, $cw->section, $cm, $course);
-        // Submit the form with its defaults overlaid by the requested settings, so every element contributes its
-        // value (including ones without explicit defaults). moodleform keeps the QuickForm protected.
-        $quickform = (fn() => $this->_form)->call($mform);
-        $submitted = array_merge($quickform->_defaultValues, (array)$defaults, (array)$moduleinfo);
-        foreach ($quickform->_elements as $element) {
-            // A browser submits every empty input (text '', an empty editor, an empty draft area); QuickForm
-            // would otherwise drop them and module code reading them would fail.
-            $elementname = (string)$element->getName();
-            if ($elementname === '' || array_key_exists($elementname, $submitted)) {
-                continue;
-            }
-            $submitted[$elementname] = match ($element->getType()) {
-                'text', 'textarea', 'hidden' => '',
-                'editor' => ['text' => '', 'format' => FORMAT_HTML, 'itemid' => \file_get_unused_draft_itemid()],
-                'filemanager', 'filepicker' => \file_get_unused_draft_itemid(),
-                default => null,
-            };
-            if ($submitted[$elementname] === null) {
-                unset($submitted[$elementname]);
-            }
+        [$data, $errors] = form_submission::submit($mform, (array)$moduleinfo);
+        if ($data === null) {
+            return [$moduleinfo, $errors];
         }
-        // Cleans each value with the element's setType(), exactly as a real form submission is cleaned.
-        $quickform->updateSubmission($submitted, []);
-        $formvalues = $quickform->exportValues();
-        unset($formvalues['sesskey'], $formvalues['_qf__' . $classname]);
 
-        // Cleaned form values win; settings the form does not know keep the requested or default value.
-        $data = $formvalues + (array)$moduleinfo + (array)$defaults;
-        $errors = $mform->validation($data, []);
-
-        $merged = (object)$data;
-        $merged->name = trim((string)$merged->name);
-        $mform->data_postprocessing($merged);
-
-        return [$merged, $errors];
+        // Settings the form does not know keep the requested or default value.
+        return [(object)((array)$data + (array)$moduleinfo + (array)$defaults), []];
     }
 
     /**
@@ -291,8 +254,8 @@ class activity_service {
      * @return void
      */
     private function validate_lti_type(int $courseid, context_course $context, array $options): void {
-        global $CFG, $USER;
-        require_once($CFG->dirroot . '/mod/lti/locallib.php');
+        global $USER;
+        moodle_lib::load('mod/lti/locallib.php');
 
         $typeid = (int)($options['typeid'] ?? 0);
         if (class_exists('\\mod_lti\\local\\types_helper')) {

@@ -1215,6 +1215,134 @@ equals `core_plugin_manager` `versiondisk`, so future bumps don't break it.
 
 phpcs is clean on the touched files.
 
+## Phase 12 (0.10.0): UI session bridge, section 1 (version 2026101100)
+
+### Contract
+
+`\webservice_mcp\local\ui\session_bridge`:
+
+- `new session_bridge(?http_transport $transport = null, int $slotwait = 20)`
+- `fetch(call_context $ctx, string $method, string $url, array $fields = [], bool $multipart = false): array`
+  returns `status`, `url` (final, after redirects), `contenttype`, `body` (≤ 20 MB), `sesskey` (or null) and
+  `filename` (or null).
+- `sesskey(call_context $ctx): string`
+- `check_url(string): string` and `query_has_sesskey(string): bool`
+
+Relative paths are resolved against wwwroot. All errors are `transfer_exception`s with a status and a code naming
+the rule.
+
+### Security
+
+- **Who:** the `uibridge` setting must be on. The caller must be a connector with a user, a credential family and a
+  service id, and the user must pass `require_user_eligible` and hold `webservice/mcp:uibridge`.
+  - A restricted context below system is refused.
+  - `assert_service_access(…, false)` runs before every fetch.
+- **Scope:** a GET needs read scope; a POST, or a URL whose query has a sesskey, needs write scope.
+- **URL policy:**
+  - same origin under wwwroot only;
+  - refused: user info, dot segments, `//`, encoded `%2e`/`%2f`/`%5c`/`%00`, spaces, control characters, backslashes;
+  - never fetched: `/login`, `/webservice`, `/admin/tool/mobile`, `/user/managetoken.php`, `/lib/ajax`,
+    `/pluginfile.php`, `/draftfile.php`;
+  - fragments are dropped.
+- **Redirects:** up to 5, each re-checked against the policy. A POST becomes a GET on 301/302/303; 307/308 keep the
+  method. A redirect to `/login/index.php` re-logs in once, then fails with `uibridgesessionlost`.
+- **Login:**
+  - `create_user_key('webservice_mcp_ui', userid, null, uibridgeloopbackip, now + 30)`; the key-to-family handoff is
+    kept in the cache, never in the request.
+  - `ui/login.php` validates the key and deletes only that one. It refuses if a session already exists, re-checks the
+    user, runs `complete_user_login()` (without the concurrent-login limit), sets `$SESSION->webservice_mcp_ui`, and
+    answers 204.
+- **Sessions:** per-family cookies live in MUC `uibridge_session` (TTL 900).
+  - Revoking the last credential of a family destroys the Moodle session and clears the cache, through a
+    `credential_revoked` observer. Rotation keeps the family, so the session survives.
+  - `manager::destroy()` is used from 4.5, `kill_session()` before.
+- **Concurrency:** two site-wide lock slots with a 20-second wait, then `uibridgebusy`. A per-family lock covers
+  login.
+- **Cleanup:** unredeemed `webservice_mcp_ui` keys are purged by the cleanup task.
+
+### Audit
+
+- `server::audit_dispatch_result()` takes `_meta['org.moodle/auditdetail']` from tool results and stores it as the
+  audit `detail` for successful calls.
+- The key is always removed from the client result, and `_meta` is dropped if that leaves it empty.
+- Failed calls still store the error text.
+- The logger stores whatever detail it is given, cleaned to one line of at most 255 characters.
+- Test: `audit_detail_test::test_bridge_audit_detail_is_stored_and_stripped`.
+- Caveat: `tasks.php` results don't pass through this path, so a UI tool run as a task would need its own strip.
+
+### Live e2e harness and deployment notes
+
+**Login key and client IP.** The login key is bound to the `uibridgeloopbackip` setting (default `127.0.0.1`).
+The address Moodle sees as the client on the loopback request (`getremoteaddr()` inside `ui/login.php`) must equal
+it, otherwise `validate_user_key()` throws `ipmismatch` and the bridge reports `uibridgeloginfailed` (HTTP 502).
+
+**How the transport connects.** `curl_transport` connects to `<wwwroot host>:<wwwroot port, or the scheme default>`
+pinned to that IP with `CURLOPT_RESOLVE`, using wwwroot's own scheme:
+
+- with `http://` there is no TLS;
+- with `https://` the certificate is verified against the real host name, which is why `CURLOPT_RESOLVE` is used
+  rather than connecting to `https://127.0.0.1`.
+
+**Harness at `http://localhost:8199` (`php -S`, `PHP_CLI_SERVER_WORKERS=4`):**
+
+- Leave `uibridgeloopbackip` at `127.0.0.1` if `php -S` listens on IPv4. The resolve entry becomes
+  `localhost:8199:127.0.0.1`; the built-in server reports `REMOTE_ADDR=127.0.0.1`, which matches the key.
+- If the server was started as `php -S localhost:8199` and binds only `::1`, set `uibridgeloopbackip` to `::1`. The
+  key is then bound to `::1`, which is what Moodle sees. Simplest: start it as `php -S 127.0.0.1:8199` and keep the
+  default.
+- Nothing else is needed: `uibridge` defaults to 1, and the capability is granted to the authenticated-user
+  archetype.
+- If the harness sets `$CFG->getremoteaddrconf` to trust X-Forwarded-For, that's fine: the bridge never sends such
+  headers.
+- **Worker load:** one bridge fetch holds the MCP request's worker plus one loopback worker. With 2 bridge slots,
+  peak use is the MCP workers plus 2 loopback workers. With 4 workers, avoid more than 2 parallel MCP calls during
+  bridge tests, or a loopback request can starve (curl times out after 60 seconds).
+- **Cookies:** `$CFG->cookiesecure` must be off on plain http. Otherwise the session cookie is still sent back,
+  because the bridge doesn't enforce the Secure flag, but browsers would not.
+
+**Production (`https://learn.aspireschool.org`, nginx + PHP-FPM, `pm.max_children = 5`):**
+
+- Keep `127.0.0.1` if nginx listens on it for 443 and sees the client as `127.0.0.1`.
+- If nginx sits behind a proxy and Moodle's `getremoteaddr()` reads a forwarded header, check the value
+  `ui/login.php` sees.
+- The 2-slot cap leaves 1 FPM worker free for normal traffic while 2 bridge fetches each hold 2 workers. Consider
+  raising `max_children`.
+
+### Not unit-tested, verify live
+
+- **Real curl loopback, TLS, the 20 MB abort.** PHPUnit uses a fake transport.
+- **The 2-slot busy path.** Moodle's DB locks are re-entrant within one connection, so a single PHPUnit process
+  cannot make the slots look busy.
+- **Old sessions after cache expiry.** When the 900 s cache entry expires, the family logs in again; its old Moodle
+  session isn't destroyed and expires after `sessiontimeout`.
+
+### Tests
+
+`tests/session_bridge_test.php` (8 tests, fake transport in `tests/fixtures/session_bridge_fake_transport.php`)
+covers:
+
+- the URL policy, with 20 refused URLs;
+- one login with the session reused afterwards;
+- login keys: bound to the IP, single-use, short-lived, tied to the right user and family;
+- scope rules;
+- refusals: restricted context, raw token, setting off, service disabled, capability prohibited;
+- redirects: relative, POST turning into GET, foreign host, denied path, login re-login, session lost;
+- family revocation versus rotation;
+- download file name and no sesskey on non-HTML responses.
+
+Plus the audit test above.
+
+### Results
+
+| Moodle / DB | Result |
+|---|---|
+| 4.2 / MariaDB 10.11 | `Tests: 345, Assertions: 2472, Failures: 2` |
+| 4.5 / PostgreSQL | `Tests: 345, Assertions: 2479, Errors: 2, Skipped: 1` |
+
+All session bridge and audit tests pass on both. The failures are in `ui_parity_course_test`, `ui_page_parser_test`
+and `activity_service_test` (other owners). phpcs is clean, except the by-design "no `require_login`" warning on
+`ui/login.php`.
+
 ## Known limitations
 
 Resolved in round 3: strict refresh rotation (now a grace window), cache-only jti storage (now a table), hard-coded
