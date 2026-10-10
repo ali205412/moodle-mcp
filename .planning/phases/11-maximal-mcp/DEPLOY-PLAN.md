@@ -145,3 +145,15 @@ harmlessly; drop them if wanted.
   Pre-release: 313/313 PHPUnit on 4.2/MariaDB and 4.5/PostgreSQL, phpcs clean, 82/82 live checks.
 - Post-deploy, app served from production: activity type names, open-in-Moodle (header + activities), model context
   update all confirmed in the reference host. Test key `ui-audit` revoked; harness stopped.
+
+## 0.10.0 UI bridge deploy (2026-10-10)
+
+- 0.10.0 (2026101100, commit `67b47b3`), maintenance 12 s, backup `/var/backups/webservice_mcp-20261010-0922`.
+  Pre-release: 350/350 PHPUnit on 4.2/MariaDB and 4.5/PostgreSQL, phpcs/phpdoc clean, 99/99 live checks incl. 15
+  bridge checks (form edit saved, action link, admin setting, student refused, policy, CSV export as file).
+- PHP-FPM `/etc/php/8.1/fpm/pool.d/www.conf`: pm.max_children 5 -> 12 (start 4, spare 2-6), graceful reload; old file
+  in the backup dir as `www.conf.bak`. Reason: each bridge fetch holds two workers; 7 GB RAM free, ~87 MB/worker.
+- Production bridge checks (`/tmp/mcp-e2e/client/prod-bridge.mjs`, read-only + one no-op preference save): course
+  page (tiles format: sections on their own pages), section page, activity settings form, admin settings, live logs,
+  grader report, logout refused, preference submit "Changes saved". 78 tools listed. Audit rows carry page paths.
+  Test key `bridge-check` revoked.
