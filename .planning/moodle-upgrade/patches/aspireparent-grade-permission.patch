@@ -1,0 +1,100 @@
+--- a/local/aspireparent/lib.php
++++ b/local/aspireparent/lib.php
+@@ -103,6 +103,39 @@
+ }
+ 
+ /**
++ * Whether the current user may see the given mentee's grades.
++ *
++ * Allowed: the mentee themself, a parent of the mentee, staff with moodle/grade:viewall
++ * in the given context, or a token the parent app issued for one child (get_mentee_token
++ * records the parent as creatorid) when that same parent is also the mentee's parent.
++ * The last case lets the app switch between siblings without fetching a new token.
++ *
++ * @param int $menteeid The mentee user ID
++ * @param context|null $context Context to check moodle/grade:viewall in, if any
++ * @return bool
++ */
++function local_aspireparent_can_view_mentee($menteeid, $context = null) {
++    global $DB, $USER;
++
++    if ($menteeid == $USER->id || local_aspireparent_is_parent_of($USER->id, $menteeid)) {
++        return true;
++    }
++    if ($context && has_capability('moodle/grade:viewall', $context)) {
++        return true;
++    }
++    $wstoken = optional_param('wstoken', '', PARAM_ALPHANUM);
++    if ($wstoken !== '') {
++        $creatorid = $DB->get_field('external_tokens', 'creatorid', ['token' => $wstoken, 'userid' => $USER->id]);
++        if ($creatorid && $creatorid != $USER->id
++                && local_aspireparent_is_parent_of($creatorid, $USER->id)
++                && local_aspireparent_is_parent_of($creatorid, $menteeid)) {
++            return true;
++        }
++    }
++    return false;
++}
++
++/**
+  * Get mentees for a parent user.
+  *
+  * @param int $parentid The parent user ID
+--- a/local/aspireparent/classes/external/get_mentee_grades.php
++++ b/local/aspireparent/classes/external/get_mentee_grades.php
+@@ -21,6 +21,7 @@
+ require_once($CFG->dirroot . '/lib/externallib.php');
+ require_once($CFG->dirroot . '/grade/lib.php');
+ require_once($CFG->dirroot . '/grade/querylib.php');
++require_once($CFG->dirroot . '/local/aspireparent/lib.php');
+ 
+ use external_api;
+ use external_function_parameters;
+@@ -135,17 +136,16 @@
+             $params['userid'] = $USER->id;
+         }
+         
+-        // BYPASSING ALL PERMISSION CHECKS AS REQUESTED
+-        error_log('[get_mentee_grades] Bypassing permission checks for user ' . $USER->id . ' viewing grades for user ' . $params['userid']);
+-        $isparent = true; // Always assume parent access
+-        
+         // Get the course
+         $course = $DB->get_record('course', array('id' => $params['courseid']), '*', MUST_EXIST);
+         $context = context_course::instance($course->id);
+         
+-        // BYPASSING ENROLLMENT CHECK AS REQUESTED
+-        error_log('[get_mentee_grades] Bypassing enrollment check for user ' . $params['userid'] . ' in course ' . $params['courseid']);
+-        
++        self::validate_context(\context_system::instance());
++        if (!local_aspireparent_can_view_mentee($params['userid'], $context)) {
++            throw new \moodle_exception('nopermissions', 'error', '', 'view grades of this user');
++        }
++        $isparent = true; // Parents and students see the same filtered view: hidden items are skipped.
++
+         // Get user info
+         $user = $DB->get_record('user', array('id' => $params['userid']), '*', MUST_EXIST);
+         
+--- a/local/aspireparent/classes/external/get_mentee_course_grades.php
++++ b/local/aspireparent/classes/external/get_mentee_course_grades.php
+@@ -19,6 +19,7 @@
+ defined('MOODLE_INTERNAL') || die();
+ 
+ require_once($CFG->dirroot . '/lib/externallib.php');
++require_once($CFG->dirroot . '/local/aspireparent/lib.php');
+ require_once($CFG->dirroot . '/grade/lib.php');
+ require_once($CFG->dirroot . '/grade/querylib.php');
+ require_once($CFG->dirroot . '/grade/report/user/lib.php');
+@@ -96,9 +97,10 @@
+         $context = context_system::instance();
+         self::validate_context($context);
+         
+-        // BYPASSING ALL PERMISSION CHECKS AS REQUESTED
+-        error_log('[get_mentee_course_grades] Bypassing permission checks for user ' . $USER->id . ' viewing mentee ' . $params['menteeid']);
+-        
++        if (!local_aspireparent_can_view_mentee($params['menteeid'])) {
++            throw new \moodle_exception('nopermissions', 'error', '', 'view grades of this user');
++        }
++
+         // Get ALL courses where the mentee has grades, regardless of enrollment status
+         $sql = "SELECT DISTINCT c.*
+                 FROM {course} c

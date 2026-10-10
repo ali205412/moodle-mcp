@@ -109,3 +109,11 @@ recommended)**
 
 If you prefer to go to 5.1 now anyway: Phase A steps 1–7 first, then Phase B with `MOODLE_501_STABLE`, Tiles 5.1.0.2
 and Lightbox 4.5.4, and plan the next upgrade before 2027-04-19.
+
+## Done log
+
+- 2026-10-10 10:39–10:44 UTC: core 4.5.6 → 4.5.15 (`git reset --hard v4.5.15` on MOODLE_405_STABLE, then `admin/cli/upgrade.php`).
+  Backup: `/var/backups/moodle-upgrade-4515-20261010-1039/` (full DB dump 246 MB gz, previous git HEAD fb02f4fa9f2).
+  Maintenance ~4 min (a root-owned `.git` log file blocked the first git step; fixed with `chown -R nginx:nginx .git`).
+  Checks: pages/login OK, cron running, 0 PHP fatals, MCP production smoke test all passed.
+  Rollback: maintenance on → `git reset --hard fb02f4fa9f2` → restore `moodledb.sql.gz` → maintenance off.
