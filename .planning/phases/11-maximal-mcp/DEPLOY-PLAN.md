@@ -134,3 +134,14 @@ harmlessly; drop them if wanted.
 - Verified on production: legacy-token refresh fix in place; explorer `courseid` alone opens the course; drafts listing;
   explained not-found; gateway validation reasons; wrapper input explanations; audit `detail` stored; rejected token
   audited (`invalid_token`); smoke 21/21; file checks all pass. Test keys revoked, CSV shredded.
+
+## 0.9.5 Explorer redesign deploy (2026-10-10)
+
+- Screen-by-screen audit of the Moodle Explorer MCP App in the official MCP Apps reference host (ext-apps basic-host)
+  against production data: course list, course view, filter, download, Ask Claude, open in Moodle, error state,
+  dark mode, 430 px width, keyboard focus. Found and fixed: `ui/message` content not an array (Ask Claude silently
+  dropped by SDK hosts), non-focusable cards/links, no dark theme, panel height never shrinking, unreadable sizes.
+- 0.9.5 (2026101011, commit `87d89fb`), maintenance 9 s, backup `/var/backups/webservice_mcp-20261010-0706`.
+  Pre-release: 313/313 PHPUnit on 4.2/MariaDB and 4.5/PostgreSQL, phpcs clean, 82/82 live checks.
+- Post-deploy, app served from production: activity type names, open-in-Moodle (header + activities), model context
+  update all confirmed in the reference host. Test key `ui-audit` revoked; harness stopped.
