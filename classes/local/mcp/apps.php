@@ -172,9 +172,16 @@ class apps {
                 'fullname' => (string)$course['fullname'],
                 'shortname' => (string)$course['shortname'],
                 'progress' => $course['progress'] ?? null,
+                'completed' => !empty($course['completed']),
+                'visible' => (int)($course['visible'] ?? 1) === 1,
+                'favourite' => !empty($course['isfavourite']),
                 'lastaccess' => $course['lastaccess'] ?? null,
+                'url' => (new \moodle_url('/course/view.php', ['id' => (int)$course['id']]))->out(false),
             ];
         }
+        // Favourites first, then most recently opened.
+        usort($courses, static fn(array $a, array $b): int => [$b['favourite'], (int)$b['lastaccess'], $a['fullname']]
+            <=> [$a['favourite'], (int)$a['lastaccess'], $b['fullname']]);
         return $courses;
     }
 
@@ -198,19 +205,34 @@ class apps {
                     'id' => (int)$module['id'],
                     'name' => (string)$module['name'],
                     'modname' => (string)$module['modname'],
+                    'modlabel' => self::module_label((string)$module['modname']),
                     'uservisible' => $module['uservisible'] ?? true,
-                    'url' => $module['url'] ?? null,
+                    'visible' => (int)($module['visible'] ?? 1) === 1,
+                    'url' => empty($module['noviewlink']) ? ($module['url'] ?? null) : null,
+                    'completion' => !empty($module['completiondata']['istrackeduser'])
+                        ? (int)$module['completiondata']['state'] : null,
+                    'dates' => array_map(static fn(array $d): array => [
+                        'label' => (string)$d['label'],
+                        'timestamp' => (int)$d['timestamp'],
+                    ], $module['dates'] ?? []),
                     'contents' => array_values(array_map(static fn(array $f): array => [
                         'type' => $f['type'] ?? 'file',
                         'filename' => (string)($f['filename'] ?? ''),
+                        'filepath' => (string)($f['filepath'] ?? '/'),
                         'fileurl' => (string)($f['fileurl'] ?? ''),
                         'filesize' => (int)($f['filesize'] ?? 0),
                         'mimetype' => $f['mimetype'] ?? null,
                     ], $module['contents'] ?? [])),
                 ];
             }
-            $sections[] = ['id' => (int)$section['id'], 'name' => (string)$section['name'],
-                'summary' => (string)($section['summary'] ?? ''), 'modules' => $modules];
+            $summary = trim(html_to_text((string)($section['summary'] ?? ''), 0, false));
+            $sections[] = [
+                'id' => (int)$section['id'],
+                'name' => (string)$section['name'],
+                'summary' => \core_text::strlen($summary) > 400 ? \core_text::substr($summary, 0, 400) . '…' : $summary,
+                'visible' => (int)($section['visible'] ?? 1) === 1,
+                'modules' => $modules,
+            ];
         }
         try {
             $events = resources::call(
@@ -218,16 +240,37 @@ class apps {
                 ['courseid' => $courseid, 'timesortfrom' => time(), 'limitnum' => 10],
                 $ctx
             );
-            $deadlines = array_map(static fn(array $e): array => ['name' => (string)$e['name'],
-                'timesort' => (int)$e['timesort']], $events['events'] ?? []);
+            $deadlines = array_map(static fn(array $e): array => [
+                'name' => (string)$e['name'],
+                'timesort' => (int)$e['timesort'],
+                'overdue' => !empty($e['overdue']),
+                'url' => (string)($e['action']['url'] ?? $e['url'] ?? ''),
+                'actionname' => (string)($e['action']['name'] ?? ''),
+            ], $events['events'] ?? []);
         } catch (\Throwable $e) {
             $deadlines = [];
         }
         return [
             'view' => 'course',
-            'course' => ['id' => $courseid, 'fullname' => (string)$course['courses'][0]['fullname']],
+            'course' => [
+                'id' => $courseid,
+                'fullname' => (string)$course['courses'][0]['fullname'],
+                'url' => (new \moodle_url('/course/view.php', ['id' => $courseid]))->out(false),
+            ],
             'sections' => $sections,
             'deadlines' => $deadlines,
         ];
+    }
+
+    /**
+     * Human name of an activity type, e.g. "Assignment" for assign.
+     *
+     * @param string $modname Module name.
+     * @return string
+     */
+    private static function module_label(string $modname): string {
+        $manager = get_string_manager();
+        return $manager->string_exists('modulename', 'mod_' . $modname)
+            ? get_string('modulename', 'mod_' . $modname) : $modname;
     }
 }

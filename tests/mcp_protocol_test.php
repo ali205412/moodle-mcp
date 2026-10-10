@@ -452,6 +452,19 @@ final class mcp_protocol_test extends advanced_testcase {
         $this->assertContains('Week 1 notes', $names);
         $this->assertStringContainsString('Week 1 notes', $view['content'][0]['text']);
 
+        // The app gets links, readable activity types and visibility for every module.
+        $this->assertStringContainsString('/course/view.php?id=' . $course->id, $view['structuredContent']['course']['url']);
+        $page = null;
+        foreach ($view['structuredContent']['sections'] as $section) {
+            foreach ($section['modules'] as $module) {
+                $page = $module['name'] === 'Week 1 notes' ? $module : $page;
+            }
+        }
+        $this->assertSame('Page', $page['modlabel']);
+        $this->assertTrue($page['visible']);
+        $this->assertStringContainsString('/mod/page/view.php', $page['url']);
+        $this->assertStringContainsString('/course/view.php?id=' . $course->id, $list['structuredContent']['courses'][0]['url']);
+
         // Passing courseid alone opens that course instead of silently returning the course list.
         $this->assertSame('course', apps::execute(['courseid' => $course->id], $ctx)['structuredContent']['view']);
     }

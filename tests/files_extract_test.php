@@ -160,7 +160,8 @@ final class files_extract_test extends advanced_testcase {
             "## Slide 1\nIntro title\nSpeaker notes:\nRemember the demo\n\n## Slide 2\nSecond in show",
             $text
         );
-        $this->assertStringNotContainsString('99', $text);
+        // The slide-number placeholder (99) is dropped; match whole lines so ids in the URI cannot collide.
+        $this->assertDoesNotMatchRegularExpression('/^99$/m', $text);
     }
 
     /**

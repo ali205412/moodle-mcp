@@ -1,6 +1,19 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Version 0.9.5 (2026101011)
+- Moodle Explorer (MCP App) redesign, audited screen by screen in the MCP Apps reference host:
+  - "Ask Claude" works in SDK hosts (`ui/message` content is an array per the spec types); per-file "Ask Claude"
+  - keyboard and screen-reader accessible (real buttons, focus rings, labelled sections, live region)
+  - dark and light themes follow the host (with fallbacks), host fonts, locale and time zone
+  - panel height fits content; full-screen toggle; host-mediated downloads (`ui/download-file`) with link fallback
+  - course list: favourites first, progress bars, completed/hidden badges, last opened, filter
+  - course view: collapsible sections with summaries, filter with highlighting, upcoming/overdue deadlines,
+    activity icons and type names, completion ticks, dates, open in Moodle, file type badges and readable sizes
+  - tells the model which course is open (`ui/update-model-context`); skeleton loading; error states with recovery
+- `moodle_explorer` returns course/deadline links, activity type names, completion, dates, visibility and plain-text
+  section summaries
+
 ## Version 0.9.4 (2026101010)
 - OAuth: concurrent refreshes of a pre-0.9.0 refresh token no longer log the user out (legacy tokens join a token
   family on first rotation, so the grace window applies)
