@@ -1,0 +1,362 @@
+ Volume "mcp51_plugin-ci-cache"  Creating
+ Volume "mcp51_plugin-ci-cache"  Created
+ Volume "mcp51_composer-cache"  Creating
+ Volume "mcp51_composer-cache"  Created
+#0 building with "default" instance using docker driver
+
+#1 [plugin-ci-pgsql internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.70kB 0.0s done
+#1 DONE 0.1s
+
+#2 [plugin-ci-pgsql internal] load metadata for docker.io/library/composer:2
+#2 DONE 0.0s
+
+#3 [plugin-ci-pgsql internal] load metadata for docker.io/library/php:8.2-cli-bookworm
+#3 ...
+
+#4 [plugin-ci-pgsql auth] library/php:pull token for registry-1.docker.io
+#4 DONE 0.0s
+
+#5 [plugin-ci-pgsql auth] library/node:pull token for registry-1.docker.io
+#5 DONE 0.0s
+
+#6 [plugin-ci-pgsql internal] load metadata for docker.io/library/node:20-bookworm-slim
+#6 ...
+
+#3 [plugin-ci-pgsql internal] load metadata for docker.io/library/php:8.2-cli-bookworm
+#3 DONE 0.6s
+
+#6 [plugin-ci-pgsql internal] load metadata for docker.io/library/node:20-bookworm-slim
+#6 DONE 0.6s
+
+#7 [plugin-ci-pgsql internal] load .dockerignore
+#7 transferring context: 103B done
+#7 DONE 0.0s
+
+#8 [plugin-ci-pgsql composer 1/1] FROM docker.io/library/composer:2
+#8 DONE 0.0s
+
+#9 [plugin-ci-pgsql node20 1/1] FROM docker.io/library/node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+#9 DONE 0.0s
+
+#10 [plugin-ci-pgsql node22 1/2] FROM docker.io/library/php:8.2-cli-bookworm@sha256:0d6ec82fde85307fd9c672527017fccf9bac55f254756f035e542f8c566b63c9
+#10 DONE 0.0s
+
+#11 [plugin-ci-pgsql internal] load build context
+#11 transferring context: 113B done
+#11 DONE 0.1s
+
+#12 [plugin-ci-pgsql stage-3 7/8] RUN printf "max_input_vars=5000\n" > /usr/local/etc/php/conf.d/moodle-plugin-ci.ini  && chmod +x /usr/local/bin/run-plugin-ci
+#12 CACHED
+
+#13 [plugin-ci-pgsql stage-3 3/8] COPY --from=composer /usr/bin/composer /usr/local/bin/composer
+#13 CACHED
+
+#14 [plugin-ci-pgsql stage-3 2/8] RUN apt-get update && apt-get install -y --no-install-recommends     ca-certificates     curl     default-mysql-client     ghostscript     git     libfreetype6-dev     libicu-dev     libjpeg62-turbo-dev     libonig-dev     libpng-dev     libpq-dev     libxml2-dev     libzip-dev     locales     poppler-utils     postgresql-client     rsync     unzip     zip  && sed -i '/en_AU.UTF-8/s/^# //g' /etc/locale.gen  && locale-gen  && docker-php-ext-configure gd --with-freetype --with-jpeg  && docker-php-ext-install -j"$(nproc)"     exif     gd     intl     mysqli     opcache     pdo_mysql     pdo_pgsql     pgsql     soap     zip  && rm -rf /var/lib/apt/lists/*
+#14 CACHED
+
+#15 [plugin-ci-pgsql stage-3 5/8] COPY --from=node22 /opt/node22 /opt/node22
+#15 CACHED
+
+#16 [plugin-ci-pgsql stage-3 6/8] COPY docker/plugin-ci/run-tests.sh /usr/local/bin/run-plugin-ci
+#16 CACHED
+
+#17 [plugin-ci-pgsql node22 2/2] RUN apt-get update && apt-get install -y --no-install-recommends     ca-certificates     curl     xz-utils  && rm -rf /var/lib/apt/lists/*  && mkdir -p /opt/node22  && curl -fsSL https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.xz     | tar -xJ --strip-components=1 -C /opt/node22
+#17 CACHED
+
+#18 [plugin-ci-pgsql stage-3 4/8] COPY --from=node20 /usr/local /opt/node20
+#18 CACHED
+
+#19 [plugin-ci-pgsql stage-3 8/8] WORKDIR /work
+#19 CACHED
+
+#20 [plugin-ci-pgsql] exporting to image
+#20 exporting layers done
+#20 writing image sha256:ebbbbe2cdb308680cecb7629fa0e6e4767edf1279dcf6cd04a9af50d508fb365 0.0s done
+#20 naming to docker.io/library/mcp51-plugin-ci-pgsql done
+#20 DONE 0.0s
+
+#21 [plugin-ci-pgsql] resolving provenance for metadata file
+#21 DONE 0.0s
+Creating a "moodlehq/moodle-plugin-ci" project at "../opt/moodle-plugin-ci/ci"
+The repository at "/plugin" does not have the correct ownership and git refuses to use it:
+
+fatal: detected dubious ownership in repository at '/plugin'
+To add an exception for this directory, call:
+
+git config --global --add safe.directory /plugin
+
+Installing moodlehq/moodle-plugin-ci (4.5.11)
+  - Downloading moodlehq/moodle-plugin-ci (4.5.11)
+  - Installing moodlehq/moodle-plugin-ci (4.5.11): Extracting archive
+Created project in /opt/moodle-plugin-ci/ci
+Installing dependencies from lock file
+Verifying lock file contents can be installed on current platform.
+Package operations: 43 installs, 0 updates, 0 removals
+  - Downloading squizlabs/php_codesniffer (3.13.6)
+  - Downloading dealerdirect/phpcodesniffer-composer-installer (v1.2.1)
+  - Downloading composer/pcre (3.4.0)
+  - Downloading laravel-zero/phar-updater (v1.1.1)
+  - Downloading marcj/topsort (2.0.0)
+  - Downloading mustache/mustache (v2.14.2)
+  - Downloading phpcsstandards/phpcsutils (1.2.3)
+  - Downloading phpcsstandards/phpcsextra (1.5.1)
+  - Downloading moodlehq/moodle-cs (v3.7.0)
+  - Downloading moodlehq/moodle-local_ci (v1.1.4)
+  - Syncing moodlehq/moodle-local_moodlecheck (1.3.2) into cache
+  - Downloading nikic/php-parser (v5.8.0)
+  - Downloading php-parallel-lint/php-console-color (v1.0.1)
+  - Downloading php-parallel-lint/php-console-highlighter (v1.0.0)
+  - Downloading php-parallel-lint/php-parallel-lint (v1.4.0)
+  - Downloading symfony/polyfill-mbstring (v1.38.2)
+  - Downloading symfony/polyfill-php80 (v1.37.0)
+  - Downloading symfony/polyfill-ctype (v1.37.0)
+  - Downloading symfony/filesystem (v5.4.45)
+  - Downloading symfony/deprecation-contracts (v2.5.4)
+  - Downloading psr/container (1.1.2)
+  - Downloading symfony/service-contracts (v2.5.4)
+  - Downloading symfony/polyfill-php81 (v1.38.1)
+  - Downloading symfony/dependency-injection (v5.4.48)
+  - Downloading symfony/config (v5.4.46)
+  - Downloading pdepend/pdepend (2.16.2)
+  - Downloading psr/log (1.1.4)
+  - Downloading composer/xdebug-handler (3.0.5)
+  - Downloading phpmd/phpmd (2.15.0)
+  - Downloading sebastian/version (3.0.2)
+  - Downloading sebastian/cli-parser (1.0.2)
+  - Downloading phpunit/php-timer (5.0.3)
+  - Downloading phpunit/php-file-iterator (3.0.6)
+  - Downloading sebastian/phpcpd (6.0.3)
+  - Downloading symfony/polyfill-intl-normalizer (v1.38.0)
+  - Downloading symfony/polyfill-intl-grapheme (v1.41.0)
+  - Downloading symfony/string (v5.4.47)
+  - Downloading symfony/polyfill-php73 (v1.37.0)
+  - Downloading symfony/console (v5.4.47)
+  - Downloading symfony/dotenv (v5.4.48)
+  - Downloading symfony/finder (v5.4.45)
+  - Downloading symfony/process (v5.4.51)
+  - Downloading symfony/yaml (v5.4.53)
+  0/42 [>---------------------------]   0%
+ 10/42 [======>---------------------]  23%
+ 16/42 [==========>-----------------]  38%
+ 21/42 [==============>-------------]  50%
+ 26/42 [=================>----------]  61%
+ 32/42 [=====================>------]  76%
+ 34/42 [======================>-----]  80%
+ 38/42 [=========================>--]  90%
+ 42/42 [============================] 100%
+  - Installing squizlabs/php_codesniffer (3.13.6): Extracting archive
+  - Installing dealerdirect/phpcodesniffer-composer-installer (v1.2.1): Extracting archive
+  - Installing composer/pcre (3.4.0): Extracting archive
+  - Installing laravel-zero/phar-updater (v1.1.1): Extracting archive
+  - Installing marcj/topsort (2.0.0): Extracting archive
+  - Installing mustache/mustache (v2.14.2): Extracting archive
+  - Installing phpcsstandards/phpcsutils (1.2.3): Extracting archive
+  - Installing phpcsstandards/phpcsextra (1.5.1): Extracting archive
+  - Installing moodlehq/moodle-cs (v3.7.0): Extracting archive
+  - Installing moodlehq/moodle-local_ci (v1.1.4): Extracting archive
+  - Installing moodlehq/moodle-local_moodlecheck (1.3.2): Cloning v1.3.2 from cache
+  - Installing nikic/php-parser (v5.8.0): Extracting archive
+  - Installing php-parallel-lint/php-console-color (v1.0.1): Extracting archive
+  - Installing php-parallel-lint/php-console-highlighter (v1.0.0): Extracting archive
+  - Installing php-parallel-lint/php-parallel-lint (v1.4.0): Extracting archive
+  - Installing symfony/polyfill-mbstring (v1.38.2): Extracting archive
+  - Installing symfony/polyfill-php80 (v1.37.0): Extracting archive
+  - Installing symfony/polyfill-ctype (v1.37.0): Extracting archive
+  - Installing symfony/filesystem (v5.4.45): Extracting archive
+  - Installing symfony/deprecation-contracts (v2.5.4): Extracting archive
+  - Installing psr/container (1.1.2): Extracting archive
+  - Installing symfony/service-contracts (v2.5.4): Extracting archive
+  - Installing symfony/polyfill-php81 (v1.38.1): Extracting archive
+  - Installing symfony/dependency-injection (v5.4.48): Extracting archive
+  - Installing symfony/config (v5.4.46): Extracting archive
+  - Installing pdepend/pdepend (2.16.2): Extracting archive
+  - Installing psr/log (1.1.4): Extracting archive
+  - Installing composer/xdebug-handler (3.0.5): Extracting archive
+  - Installing phpmd/phpmd (2.15.0): Extracting archive
+  - Installing sebastian/version (3.0.2): Extracting archive
+  - Installing sebastian/cli-parser (1.0.2): Extracting archive
+  - Installing phpunit/php-timer (5.0.3): Extracting archive
+  - Installing phpunit/php-file-iterator (3.0.6): Extracting archive
+  - Installing sebastian/phpcpd (6.0.3): Extracting archive
+  - Installing symfony/polyfill-intl-normalizer (v1.38.0): Extracting archive
+  - Installing symfony/polyfill-intl-grapheme (v1.41.0): Extracting archive
+  - Installing symfony/string (v5.4.47): Extracting archive
+  - Installing symfony/polyfill-php73 (v1.37.0): Extracting archive
+  - Installing symfony/console (v5.4.47): Extracting archive
+  - Installing symfony/dotenv (v5.4.48): Extracting archive
+  - Installing symfony/finder (v5.4.45): Extracting archive
+  - Installing symfony/process (v5.4.51): Extracting archive
+  - Installing symfony/yaml (v5.4.53): Extracting archive
+  0/40 [>---------------------------]   0%
+ 10/40 [=======>--------------------]  25%
+ 20/40 [==============>-------------]  50%
+ 38/40 [==========================>-]  95%
+ 40/40 [============================] 100%
+Package sebastian/phpcpd is abandoned, you should avoid using it. No replacement was suggested.
+Generating autoload files
+32 packages you are using are looking for funding.
+Use the `composer fund` command to find out more!
+> cd vendor/moodlehq/moodle-local_ci && npm install --no-progress
+PHP CodeSniffer Config installed_paths set to ../../moodlehq/moodle-cs,../../phpcsstandards/phpcsextra,../../phpcsstandards/phpcsutils
+
+added 1 package, and audited 2 packages in 1s
+
+1 moderate severity vulnerability
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+npm notice
+npm notice New major version of npm available! 10.9.0 -> 12.2.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
+npm notice To update run: npm install -g npm@12.2.0
+npm notice
+No security vulnerability advisories found.
+> cd vendor/moodlehq/moodle-local_ci && npm install --no-progress
+
+up to date, audited 2 packages in 531ms
+
+1 moderate severity vulnerability
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+Using Moodle branch: MOODLE_501_STABLE
+Using database: pgsql
+Using database name: moodle_mcp_1791626894
+Using node: v22.11.0
+Running steps: phplint validate savepoints phpunit
+ 0/9 [>---------------------------]   0% < 1 sec [Starting install]
+ 2/9 [======>---------------------]  22% 8 secs [Moodle assets]
+ 3/9 [=========>------------------]  33% 8 secs [Install plugins]
+ 4/9 [============>---------------]  44% 8 secs [Install global dependencies]
+ 5/9 [==============>-----------]  55% 12 secs [Install Moodle npm dependencies]
+ 6/9 [=================>--------]  66% 38 secs [Install plugin npm dependencies]
+ 7/9 [====================>-----]  77% 43 secs [Initialize test suite]
+ 8/9 [=======================>--]  88% 2 mins [Building configs]
+ 9/9 [==========================] 100% 2 mins [Install completed]
+ RUN  PHP Lint on webservice_mcp
+PHP 8.2.34 | 10 parallel jobs
+............................................................  60/201 ( 29%)
+............................................................ 120/201 ( 59%)
+............................................................ 180/201 ( 89%)
+.....................                                        201/201 (100%)
+
+
+Checked 201 files in 0.9 seconds
+No syntax error found
+ RUN  Validating webservice_mcp
+> Found required file: version.php
+> Found required file: lang/en/webservice_mcp.php
+> In db/upgrade.php, found function xmldb_webservice_mcp_upgrade
+> In lang/en/webservice_mcp.php, found language pluginname
+> In db/install.xml, found table prefixes webservice_mcp
+ RUN  Check upgrade savepoints on webservice_mcp
+  - /work/run/moodle/public/webservice/mcp/db/upgrade.php: 
+    + found 14 matching 'if' blocks and 'savepoint' calls
+    + versions in upgrade blocks properly ordered
+    + versions in savepoint calls properly matching upgrade blocks
+ RUN  PHPUnit tests for webservice_mcp
+Moodle 5.1.8 (Build: 20261005)
+Php: 8.2.34, pgsql: 18rc1 (Debian 18~rc1-1.pgdg13+1), OS: Linux 6.1.0-42-amd64 x86_64
+PHPUnit 11.5.55 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.2.34
+Configuration: /work/run/moodle/public/webservice/mcp/phpunit.xml
+
+...............................................................  63 / 350 ( 18%)
+............................................................... 126 / 350 ( 36%)
+........................Database transaction aborted automatically in /work/run/moodle/public/vendor/bin/phpunit
+.Database transaction aborted automatically in /work/run/moodle/public/vendor/bin/phpunit
+..Database transaction aborted automatically in /work/run/moodle/public/vendor/bin/phpunit
+........Database transaction aborted automatically in /work/run/moodle/public/vendor/bin/phpunit
+..Database transaction aborted automatically in /work/run/moodle/public/vendor/bin/phpunit
+.......................... 189 / 350 ( 54%)
+.................E........EEDatabase transaction aborted automatically in /work/run/moodle/public/vendor/bin/phpunit
+................................... 252 / 350 ( 72%)
+............Database transaction aborted automatically in /work/run/moodle/public/vendor/bin/phpunit
+......................................Database transaction aborted automatically in /work/run/moodle/public/vendor/bin/phpunit
+............. 315 / 350 ( 90%)
+.............................E.....                             350 / 350 (100%)
+
+Time: 02:18.558, Memory: 198.00 MB
+
+There were 4 errors:
+
+1) webservice_mcp\parity_wrapper_services_test::test_question_bank_service_can_manage_supported_parity_flows
+dml_missing_record_exception: Can't find data record in database table question_categories. (SELECT contextid FROM {question_categories} WHERE id = ?
+[array (
+  0 => 0,
+)])
+
+/work/run/moodle/public/lib/dml/moodle_database.php:1735
+/work/run/moodle/public/lib/dml/moodle_database.php:1711
+/work/run/moodle/public/webservice/mcp/classes/local/wrapper/question_category_service.php:67
+/work/run/moodle/public/webservice/mcp/classes/local/wrapper/question_bank_service.php:68
+/work/run/moodle/public/webservice/mcp/tests/parity_wrapper_services_test.php:56
+
+2) webservice_mcp\parity_wrapper_services_test::test_question_category_cycle_is_rejected
+dml_missing_record_exception: Can't find data record in database table question_categories. (SELECT contextid FROM {question_categories} WHERE id = ?
+[array (
+  0 => 0,
+)])
+
+/work/run/moodle/public/lib/dml/moodle_database.php:1735
+/work/run/moodle/public/lib/dml/moodle_database.php:1711
+/work/run/moodle/public/webservice/mcp/classes/local/wrapper/question_category_service.php:67
+/work/run/moodle/public/webservice/mcp/classes/local/wrapper/question_bank_service.php:68
+/work/run/moodle/public/webservice/mcp/tests/parity_wrapper_services_test.php:503
+
+3) webservice_mcp\parity_wrapper_services_test::test_update_question_preserves_embedded_files
+dml_missing_record_exception: Can't find data record in database table question_categories. (SELECT contextid FROM {question_categories} WHERE id = ?
+[array (
+  0 => 0,
+)])
+
+/work/run/moodle/public/lib/dml/moodle_database.php:1735
+/work/run/moodle/public/lib/dml/moodle_database.php:1711
+/work/run/moodle/public/webservice/mcp/classes/local/wrapper/question_category_service.php:67
+/work/run/moodle/public/webservice/mcp/classes/local/wrapper/question_bank_service.php:68
+/work/run/moodle/public/webservice/mcp/tests/parity_wrapper_services_test.php:526
+
+4) webservice_mcp\wrapper_manager_test::test_wrapper_manager_executes_question_category_wrapper
+dml_missing_record_exception: Can't find data record in database table question_categories. (SELECT contextid FROM {question_categories} WHERE id = ?
+[array (
+  0 => 0,
+)])
+
+/work/run/moodle/public/lib/dml/moodle_database.php:1735
+/work/run/moodle/public/lib/dml/moodle_database.php:1711
+/work/run/moodle/public/webservice/mcp/classes/local/wrapper/question_category_service.php:67
+/work/run/moodle/public/webservice/mcp/classes/local/wrapper/question_bank_service.php:68
+/work/run/moodle/public/webservice/mcp/classes/local/wrapper/manager.php:268
+/work/run/moodle/public/webservice/mcp/classes/local/wrapper/manager.php:189
+/work/run/moodle/public/webservice/mcp/tests/wrapper_manager_test.php:188
+
+--
+
+4 tests triggered 1 PHP warning:
+
+1) /work/run/moodle/public/webservice/mcp/classes/local/wrapper/question_category_service.php:66
+Attempt to read property "id" on bool
+
+Triggered by:
+
+* webservice_mcp\parity_wrapper_services_test::test_question_bank_service_can_manage_supported_parity_flows
+  /work/run/moodle/public/webservice/mcp/tests/parity_wrapper_services_test.php:48
+
+* webservice_mcp\parity_wrapper_services_test::test_question_category_cycle_is_rejected
+  /work/run/moodle/public/webservice/mcp/tests/parity_wrapper_services_test.php:495
+
+* webservice_mcp\parity_wrapper_services_test::test_update_question_preserves_embedded_files
+  /work/run/moodle/public/webservice/mcp/tests/parity_wrapper_services_test.php:520
+
+* webservice_mcp\wrapper_manager_test::test_wrapper_manager_executes_question_category_wrapper
+  /work/run/moodle/public/webservice/mcp/tests/wrapper_manager_test.php:174
+
+ERRORS!
+Tests: 350, Assertions: 2503, Errors: 4, Warnings: 1, PHPUnit Deprecations: 45, Notices: 4.
+exit 1
