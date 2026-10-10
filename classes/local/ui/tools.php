@@ -104,7 +104,7 @@ final class tools {
                 'required' => ['url', 'form'],
                 'mutating' => true,
             ],
-        ];
+        ] + rest_tools::definitions();
     }
 
     /**
@@ -165,12 +165,16 @@ final class tools {
     }
 
     /**
-     * Whether a tool changes state.
+     * Whether a tool call changes state (a REST call only when its method is not GET).
      *
      * @param string $name Tool name.
+     * @param array $args Call arguments.
      * @return bool
      */
-    public static function is_mutating(string $name): bool {
+    public static function is_mutating(string $name, array $args = []): bool {
+        if ($name === 'moodle_rest_call') {
+            return strtoupper((string)($args['method'] ?? 'GET')) !== 'GET';
+        }
         return (bool)(self::definitions()[$name]['mutating'] ?? true);
     }
 
@@ -187,8 +191,11 @@ final class tools {
             throw new transfer_exception(403, 'uibridgeunavailable', 'Browsing Moodle pages is not enabled for this '
                 . 'connection (needs a full-site connector credential, the uibridge setting and webservice/mcp:uibridge).');
         }
-        $url = self::url_arg($args);
         $bridge = self::$bridge ?? new session_bridge();
+        if (rest_tools::handles($name)) {
+            return rest_tools::execute($name, $args, $ctx, $bridge);
+        }
+        $url = self::url_arg($args);
 
         if ($name === 'moodle_page_view') {
             if (self::has_sesskey($url)) {
@@ -287,12 +294,16 @@ final class tools {
             $out[] = '[' . strtoupper((string)($alert['type'] ?? 'info')) . '] ' . ($alert['text'] ?? '');
         }
         if (!empty($page['breadcrumb'])) {
-            $out[] = 'Path: ' . implode(' > ', array_map(fn($b) => is_array($b) ? ($b['text'] ?? '') : (string)$b,
-                $page['breadcrumb']));
+            $out[] = 'Path: ' . implode(' > ', array_map(
+                fn($b) => is_array($b) ? ($b['text'] ?? '') : (string)$b,
+                $page['breadcrumb']
+            ));
         }
         if (!empty($page['tabs'])) {
-            $out[] = 'Tabs: ' . implode(' | ', array_map(fn($t) => ($t['text'] ?? '') . (isset($t['id']) ? " [{$t['id']}]" : ''),
-                $page['tabs']));
+            $out[] = 'Tabs: ' . implode(' | ', array_map(
+                fn($t) => ($t['text'] ?? '') . (isset($t['id']) ? " [{$t['id']}]" : ''),
+                $page['tabs']
+            ));
         }
         $out[] = '';
         $out[] = (string)($page['text'] ?? '');
@@ -325,8 +336,10 @@ final class tools {
                     $line .= ' = ' . (is_array($field['value']) ? implode(', ', $field['value']) : $field['value']);
                 }
                 if (!empty($field['options'])) {
-                    $line .= ' options: ' . implode(', ', array_map(fn($o) => ($o['label'] ?? '') . '=' . ($o['value'] ?? ''),
-                        array_slice($field['options'], 0, 30))) . (count($field['options']) > 30 ? ', …' : '');
+                    $line .= ' options: ' . implode(', ', array_map(
+                        fn($o) => ($o['label'] ?? '') . '=' . ($o['value'] ?? ''),
+                        array_slice($field['options'], 0, 30)
+                    )) . (count($field['options']) > 30 ? ', …' : '');
                 }
                 $out[] = $line;
             }

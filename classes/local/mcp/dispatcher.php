@@ -309,7 +309,7 @@ class dispatcher {
                 return file_tools::execute($name, $arguments, $this->ctx);
             }
             if (ui_tools::handles($name)) {
-                $this->ctx->require_scope(ui_tools::is_mutating($name));
+                $this->ctx->require_scope(ui_tools::is_mutating($name, $arguments));
                 return ui_tools::execute($name, $arguments, $this->ctx);
             }
 
@@ -377,7 +377,7 @@ class dispatcher {
             return file_tools::is_mutating($name);
         }
         if (ui_tools::handles($name)) {
-            return ui_tools::is_mutating($name);
+            return ui_tools::is_mutating($name, $arguments);
         }
         $wrappers = new \webservice_mcp\local\wrapper\manager();
         if ($this->ctx->connector && $wrappers->find($name) !== null) {
@@ -407,6 +407,11 @@ class dispatcher {
         }
 
         $target = $name === 'wrapper_moodle_api_execute' ? (string)($arguments['functionname'] ?? '') : $name;
+        if ($name === 'moodle_rest_call' && strtoupper((string)($arguments['method'] ?? 'GET')) !== 'GET') {
+            // A REST call is destructive by its method or route, e.g. "delete_admin_oauth2_server_clients_4_delete".
+            $route = trim(str_replace('/', '_', (string)($arguments['path'] ?? '')), '_');
+            $target = strtolower((string)$arguments['method'] . '_' . $route);
+        }
         if (!preg_match(self::DESTRUCTIVE_PATTERN, $target)) {
             return null;
         }

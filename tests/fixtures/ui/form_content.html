@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Grader report | Test site</title></head>
+<body>
+<div id="page-header"><nav aria-label="Navigation bar"><ol class="breadcrumb">
+<li class="breadcrumb-item"><a href="/course/view.php?id=7">PHY 2</a></li>
+<li class="breadcrumb-item"><span>Grader report</span></li>
+</ol></nav>
+<div class="page-header-headings"><h1 class="h2">Physics 2</h1></div></div>
+<div id="region-main">
+<p>Before the forms <a href="/grade/report/index.php?id=7">Grades overview</a></p>
+<form action="/user/action_redir.php" method="post" id="participantsform">
+<input type="hidden" name="sesskey" value="abcDEF1234">
+<h3>Participants</h3>
+<p>Select users for a <b>bulk action</b>.</p>
+<ul><li>Filtered: 2 users</li></ul>
+<img src="/pix/legend.png" alt="Status legend">
+<table class="generaltable">
+<thead><tr><th>Select</th><th>Name</th><th>Roles</th></tr></thead>
+<tbody>
+<tr><td><input type="checkbox" name="user4" value="1" checked><label class="accesshide" for="u4">Select Ana</label></td>
+<td><a href="/user/view.php?id=4&amp;course=7">Ana Lopez</a></td><td>Student</td></tr>
+<tr><td><input type="checkbox" name="user5" value="1"></td>
+<td><a href="/user/view.php?id=5&amp;course=7">Ben Okafor</a></td><td>Student</td></tr>
+</tbody></table>
+<label for="formactionid">With selected users...</label>
+<select name="formaction" id="formactionid"><option value="">Choose...</option><option value="messageselect.php">Send a message</option></select>
+<input type="submit" value="Go">
+</form>
+<form action="/grade/report/grader/index.php" method="post" id="gradereport">
+<input type="hidden" name="id" value="7">
+<input type="hidden" name="sesskey" value="abcDEF1234">
+<table id="user-grades" class="gradereport-grader-table">
+<tr class="heading"><th class="header">Name</th><th class="header"><a href="/mod/assign/view.php?id=31">Essay 1</a></th><th class="header">Course total</th></tr>
+<tr class="userrow"><th class="user"><a href="/user/view.php?id=4&amp;course=7">Ana Lopez</a>
+<div class="action-menu moodle-actionmenu grader" data-collapse="menu"><div class="dropdown">
+<button class="btn btn-link btn-icon cellmenubtn" type="button" data-toggle="dropdown" aria-haspopup="true"><i class="icon fa fa-ellipsis-h" title="Cell actions" aria-hidden="true"></i><span class="sr-only">Cell actions</span></button>
+<div role="menu" class="dropdown-menu"><a class="dropdown-item" role="menuitem" href="/grade/report/singleview/index.php?id=7&amp;item=user&amp;itemid=4">Single view for this user</a>
+<a class="dropdown-item" role="menuitem" href="/grade/report/user/index.php?userid=4&amp;id=7">User report</a></div></div></div></th>
+<td class="grade"><div class="d-flex"><label for="grade_4_31" class="accesshide">Ana Lopez Essay 1</label>
+<input id="grade_4_31" name="grade[4][31]" type="number" value="80.00" title="Grade" step="any"></div></td>
+<td class="grade">80.00<div class="action-menu"><div class="dropdown"><a href="#" class="dropdown-toggle" role="button" aria-label="Edit"><i class="icon fa fa-cog" aria-hidden="true"></i></a>
+<div class="dropdown-menu dropdown-menu-right"><a class="dropdown-item" href="/grade/edit/tree/grade.php?courseid=7&amp;itemid=9&amp;userid=4">Edit grade</a>
+<a class="dropdown-item" href="/grade/edit/tree/action.php?id=7&amp;eid=n9u4&amp;action=hide">Hide</a></div></div></div></td></tr>
+<tr class="userrow"><th class="user"><a href="/user/view.php?id=5&amp;course=7">Ben Okafor</a></th>
+<td class="grade"><input id="grade_5_31" name="grade[5][31]" type="number" value="" title="Grade" step="any"></td>
+<td class="grade">-</td></tr>
+</table>
+<label for="perpage">Show per page</label>
+<select name="perpage" id="perpage">
+<option value="1">Option 1</option><option value="2">Option 2</option><option value="3">Option 3</option>
+<option value="4">Option 4</option><option value="5">Option 5</option><option value="6">Option 6</option>
+<option value="7">Option 7</option><option value="8">Option 8</option><option value="20" selected>Option 20</option>
+</select>
+<input type="password" name="secretpass" value="hunter2">
+<input type="submit" value="Save changes">
+</form>
+<div class="dropdown"><button class="btn dropdown-toggle" data-toggle="dropdown">More</button>
+<div class="dropdown-menu"><a class="dropdown-item" href="/grade/export/index.php?id=7">Export</a></div></div>
+</div>
+</body>
+</html>

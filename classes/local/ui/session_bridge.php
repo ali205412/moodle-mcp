@@ -62,6 +62,9 @@ class session_bridge {
         '/webservice' => 'web service and MCP endpoints',
         '/admin/tool/mobile' => 'mobile app login endpoints',
         '/user/managetoken.php' => 'security key management',
+        '/user/personalaccesstokens.php' => 'personal access token management',
+        '/r.php/oauth2' => 'OAuth 2 authorization endpoints',
+        '/oauth2' => 'OAuth 2 authorization endpoints',
         '/lib/ajax' => 'AJAX endpoints',
         '/pluginfile.php' => 'file downloads (use the file tools instead)',
         '/draftfile.php' => 'draft file downloads (use the file tools instead)',
@@ -87,21 +90,31 @@ class session_bridge {
     /**
      * Fetch a page of this site as the connector's user.
      *
+     * A string $fields is a REST API request: it is sent as a JSON body (when not empty) with Accept: application/json,
+     * and PUT, PATCH and DELETE are allowed as well.
+     *
      * @param call_context $ctx Call context of a connector credential.
-     * @param string $method GET or POST.
+     * @param string $method GET or POST (also PUT, PATCH and DELETE for REST API requests).
      * @param string $url Absolute URL on this site, or a path relative to wwwroot.
-     * @param array $fields Form fields for POST (name => string|array).
+     * @param array|string $fields Form fields for POST (name => string|array), or a JSON body for a REST API request.
      * @param bool $multipart Send POST fields as multipart/form-data.
      * @return array ['status', 'url', 'contenttype', 'body', 'sesskey', 'filename']
      */
-    public function fetch(call_context $ctx, string $method, string $url, array $fields = [], bool $multipart = false): array {
+    public function fetch(
+        call_context $ctx,
+        string $method,
+        string $url,
+        array|string $fields = [],
+        bool $multipart = false
+    ): array {
         $method = strtoupper($method);
-        if (!in_array($method, ['GET', 'POST'], true)) {
-            throw new transfer_exception(400, 'uibridgemethod', 'Only GET and POST are supported.');
+        $methods = is_string($fields) ? ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] : ['GET', 'POST'];
+        if (!in_array($method, $methods, true)) {
+            throw new transfer_exception(400, 'uibridgemethod', 'Only ' . implode(', ', $methods) . ' are supported.');
         }
         $family = $this->require_access($ctx);
         $url = self::check_url($url);
-        $ctx->require_scope($method === 'POST' || self::query_has_sesskey($url));
+        $ctx->require_scope($method !== 'GET' || self::query_has_sesskey($url));
 
         $slot = $this->acquire_slot();
         try {
@@ -286,7 +299,7 @@ class session_bridge {
      * @param string $family Family key.
      * @param string $method GET or POST.
      * @param string $url Checked URL.
-     * @param array $fields POST fields.
+     * @param array|string $fields POST fields or REST JSON body.
      * @param bool $multipart Multipart POST.
      * @return array
      */
@@ -295,12 +308,14 @@ class session_bridge {
         string $family,
         string $method,
         string $url,
-        array $fields,
+        array|string $fields,
         bool $multipart
     ): array {
         $userid = (int)$ctx->user->id;
         $session = self::load_session($family);
-        if (!$session || (int)$session['userid'] !== $userid) {
+        // REST routes answer an expired session as the guest instead of redirecting to the login page, so check first.
+        $expired = $session && is_string($fields) && !\core\session\manager::session_exists((string)$session['sid']);
+        if (!$session || (int)$session['userid'] !== $userid || $expired) {
             $session = $this->login($userid, $family);
         }
 
@@ -325,16 +340,22 @@ class session_bridge {
      * Send the request and follow same-origin redirects, re-checking each against the URL policy.
      *
      * @param array $session Session state (cookies are updated in place).
-     * @param string $method GET or POST.
+     * @param string $method HTTP method.
      * @param string $url Checked URL.
-     * @param array $fields POST fields.
+     * @param array|string $fields POST fields or REST JSON body.
      * @param bool $multipart Multipart POST.
      * @return array|null The response, or null when Moodle sent us to the login page.
      */
-    private function follow(array &$session, string $method, string $url, array $fields, bool $multipart): ?array {
+    private function follow(array &$session, string $method, string $url, array|string $fields, bool $multipart): ?array {
         $body = null;
         $headers = [];
-        if ($method === 'POST') {
+        if (is_string($fields)) {
+            $headers[] = 'Accept: application/json';
+            if ($fields !== '') {
+                $body = $fields;
+                $headers[] = 'Content-Type: application/json';
+            }
+        } else if ($method === 'POST') {
             $body = $multipart ? self::multipart_fields($fields) : self::urlencode_fields($fields);
             if (!$multipart) {
                 $headers[] = 'Content-Type: application/x-www-form-urlencoded';

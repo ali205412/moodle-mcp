@@ -1,6 +1,17 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## Version 0.11.0 (2026101200)
+- Page reader: content inside forms is now part of `moodle_page_view` text (tables, headings, lists, links with ids,
+  compact `[type: name="value"]` inputs; selects show only the chosen option; hidden/password values never shown),
+  so form-wrapped pages such as the grader report, participants bulk actions and admin search return their data.
+  Dropdown/action menus inside table cells are left out so large reports keep their real links.
+- Moodle REST API (5.x router, `/r.php/api/rest/v2`): `moodle_rest_describe` lists and explains routes from Moodle's
+  own OpenAPI document; `moodle_rest_call` calls them as the signed-in user through the session bridge (GET = read
+  scope, other methods = write scope and destructive confirmation). Personal-access-token and OAuth2 token pages are
+  added to the bridge deny list.
+- Connector service sync drops links to external functions that no longer exist (10 left over from 4.5 on 5.3).
+
 ## Version 0.10.1 (2026101101)
 - Moodle 5.0–5.3 compatibility: question-bank wrappers resolve the course's default `mod_qbank` bank on 5.x (course
   question banks moved into qbank activities); manual badge award/revoke use `\core_badges\award_manager` on 5.2+

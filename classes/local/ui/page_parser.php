@@ -27,7 +27,8 @@ use DOMXPath;
  * Turns a Moodle (Boost) HTML page into structured data an AI client can act on.
  *
  * Returns the title, heading, breadcrumb, alerts, tabs, the main region as markdown-like text with numbered link
- * references, every link, and every form with its fields (see form_parser). Pure DOM work: no Moodle state is
+ * references (forms included: their content is rendered between [Form Fn] and [/Form Fn], controls as
+ * [type: name="value"]), every link, and every form with its fields (see form_parser). Pure DOM work: no Moodle state is
  * read, so it parses pages from any Moodle 4.x site.
  *
  * @package     webservice_mcp
@@ -38,6 +39,12 @@ class page_parser {
     /** Elements whose content is never shown. */
     private const SKIP_TAGS = ['script', 'style', 'noscript', 'template', 'head', 'svg', 'iframe', 'object', 'select',
         'textarea', 'input', 'option', 'datalist', 'canvas', 'audio', 'video', 'map'];
+
+    /** Form controls: shown compactly inside forms, skipped elsewhere. */
+    private const CONTROL_TAGS = ['input', 'select', 'textarea'];
+
+    /** Longest control value shown in the text; the full value is in forms[]. */
+    private const MAX_VALUE_CHARS = 80;
 
     /** List indentation marker (kept through tidy(), then turned into two spaces). */
     private const INDENT = "\x01";
@@ -71,6 +78,12 @@ class page_parser {
 
     /** @var \SplObjectStorage Form element => form id (F1...). */
     private \SplObjectStorage $formids;
+
+    /** @var int Depth of rendered forms around the current node (controls are shown only inside forms). */
+    private int $formdepth = 0;
+
+    /** @var int Depth of table cells around the current node (dropdown menus are left out inside cells). */
+    private int $celldepth = 0;
 
     /**
      * Parse a page.
@@ -298,13 +311,36 @@ class page_parser {
                 $out .= preg_replace('/\s+/u', ' ', $child->nodeValue);
                 continue;
             }
-            if (!$child instanceof DOMElement || $this->is_hidden($child)) {
+            if (!$child instanceof DOMElement) {
                 continue;
             }
             $tag = strtolower($child->tagName);
+            if ($this->formdepth > 0 && in_array($tag, self::CONTROL_TAGS, true)) {
+                $out .= $this->hidden_by_markup($child) ? '' : $this->render_control($child, $ignorebuttons);
+                continue;
+            }
+            if ($this->is_hidden($child)) {
+                continue;
+            }
+            if (
+                $this->celldepth > 0 && ($child->getAttribute('role') === 'menu'
+                    || in_array('dropdown-menu', preg_split('/\s+/', $child->getAttribute('class')), true))
+            ) {
+                // Per-cell action menus (grader report, quiz overrides) would flood text and links; keep the trigger only.
+                continue;
+            }
             if ($tag === 'form' && isset($this->formids[$child])) {
+                // Forms often hold a page's main content (grader report, bulk edits): render it, marked with the form id.
+                $id = $this->formids[$child];
                 $title = $this->form_title($child);
-                $out .= "\n\n[Form {$this->formids[$child]}" . ($title !== '' ? ": {$title}" : '') . "]\n\n";
+                $this->formdepth++;
+                try {
+                    $inner = trim($this->render($child, $ignorebuttons));
+                } finally {
+                    $this->formdepth--;
+                }
+                $out .= "\n\n[Form {$id}" . ($title !== '' ? ": {$title}" : '') . "]\n"
+                    . ($inner !== '' ? $inner . "\n[/Form {$id}]\n" : '') . "\n";
                 continue;
             }
             if ($tag === 'button' || ($tag === 'a' && strpos(' ' . $child->getAttribute('class') . ' ', ' btn-close ') !== false)) {
@@ -411,7 +447,12 @@ class page_parser {
                     continue;
                 }
                 $allth = $allth && strtolower($cell->tagName) === 'th';
-                $text = $this->clean(str_replace("\n", ' ', $this->render($cell)));
+                $this->celldepth++;
+                try {
+                    $text = $this->clean(str_replace("\n", ' ', $this->render($cell)));
+                } finally {
+                    $this->celldepth--;
+                }
                 $cells[] = str_replace('|', '\\|', $text);
             }
             if ($cells && trim(implode('', $cells)) !== '') {
@@ -467,6 +508,60 @@ class page_parser {
     }
 
     /**
+     * Render a form control as [type: name="value", flags]; buttons as [label]. Option lists stay in forms[] only.
+     *
+     * @param DOMElement $el input, select or textarea.
+     * @param bool $ignorebuttons Leave out buttons.
+     * @return string
+     */
+    private function render_control(DOMElement $el, bool $ignorebuttons): string {
+        $tag = strtolower($el->tagName);
+        $type = $tag === 'input' ? (strtolower($el->getAttribute('type')) ?: 'text') : $tag;
+        if (in_array($type, ['submit', 'button', 'reset', 'image'], true)) {
+            $label = $this->clean($el->getAttribute('value') ?: $el->getAttribute('alt') ?: $el->getAttribute('aria-label'));
+            return !$ignorebuttons && $label !== '' ? " [{$label}] " : '';
+        }
+        $name = $el->getAttribute('name');
+        if ($name === '') {
+            return '';
+        }
+        $flags = [];
+        if ($type === 'select') {
+            $selected = [];
+            foreach ($this->xpath->query('.//option', $el) as $option) {
+                if ($option instanceof DOMElement && $option->hasAttribute('selected')) {
+                    $selected[] = $option;
+                }
+            }
+            if (!$selected && !$el->hasAttribute('multiple') && ($first = $this->first('.//option', $el))) {
+                $selected[] = $first;
+            }
+            $value = implode(', ', array_map(fn($o) => $o->getAttribute('label') ?: $o->textContent, $selected));
+        } else if ($type === 'textarea') {
+            $value = $el->textContent;
+        } else if (in_array($type, ['password', 'file'], true)) {
+            // Never echo passwords; file inputs have no value.
+            $value = '';
+        } else {
+            $value = $el->getAttribute('value');
+            if ($type === 'checkbox' || $type === 'radio') {
+                $value = $value === '' ? 'on' : $value;
+                if ($el->hasAttribute('checked')) {
+                    $flags[] = 'checked';
+                }
+            }
+        }
+        if ($el->hasAttribute('disabled')) {
+            $flags[] = 'disabled';
+        }
+        $value = $this->clean($value);
+        if (mb_strlen($value) > self::MAX_VALUE_CHARS) {
+            $value = mb_substr($value, 0, self::MAX_VALUE_CHARS) . '…';
+        }
+        return " [{$type}: {$name}" . ($value !== '' ? "=\"{$value}\"" : '') . ($flags ? ', ' . implode(', ', $flags) : '') . '] ';
+    }
+
+    /**
      * Register a link and return its id.
      *
      * @param string $href Reference.
@@ -498,9 +593,13 @@ class page_parser {
      * @return string
      */
     private function form_title(DOMElement $form): string {
-        $heading = $this->first('.//legend | .//h2 | .//h3 | .//label', $form);
-        $title = $heading ? $this->clean($heading->textContent) : '';
-        return mb_substr($title, 0, 80);
+        foreach ($this->xpath->query('.//legend | .//h2 | .//h3 | .//label', $form) as $heading) {
+            // Skip screen-reader-only labels (grader report cells).
+            if ($heading instanceof DOMElement && !$this->hidden_by_markup($heading)) {
+                return mb_substr($this->clean($heading->textContent), 0, 80);
+            }
+        }
+        return '';
     }
 
     /**
@@ -526,10 +625,19 @@ class page_parser {
      * @return bool
      */
     private function is_hidden(DOMElement $el): bool {
+        return in_array(strtolower($el->tagName), self::SKIP_TAGS, true) || $this->hidden_by_markup($el);
+    }
+
+    /**
+     * Whether an element is hidden by its attributes or classes.
+     *
+     * @param DOMElement $el Element.
+     * @return bool
+     */
+    private function hidden_by_markup(DOMElement $el): bool {
         if (
-            in_array(strtolower($el->tagName), self::SKIP_TAGS, true) || $el->hasAttribute('hidden')
-                || $el->getAttribute('aria-hidden') === 'true'
-                || ($el->tagName === 'input' && $el->getAttribute('type') === 'hidden')
+            $el->hasAttribute('hidden') || $el->getAttribute('aria-hidden') === 'true'
+                || ($el->tagName === 'input' && strtolower($el->getAttribute('type')) === 'hidden')
                 || preg_match('/display\s*:\s*none/i', $el->getAttribute('style'))
         ) {
             return true;

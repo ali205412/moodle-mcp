@@ -220,11 +220,17 @@ final class mcp_hardening_test extends advanced_testcase {
         // Under PHPUnit Moodle copies debuginfo into the message, so set it afterwards to test only what error_result adds.
         $invalid = new \invalid_parameter_exception();
         $invalid->debuginfo = 'Missing required key in single structure: courseid';
-        $this->assertStringContainsString('Missing required key in single structure: courseid',
-            dispatcher::error_result($invalid)['content'][0]['text']);
+        $this->assertStringContainsString(
+            'Missing required key in single structure: courseid',
+            dispatcher::error_result($invalid)['content'][0]['text']
+        );
 
-        $wrapped = new \moodle_exception('wrapper:apiexecutefailed', 'webservice_mcp', '',
-            (object)['functionname' => 'core_course_get_contents', 'errorcode' => 'invalidparameter', 'message' => 'x']);
+        $wrapped = new \moodle_exception(
+            'wrapper:apiexecutefailed',
+            'webservice_mcp',
+            '',
+            (object)['functionname' => 'core_course_get_contents', 'errorcode' => 'invalidparameter', 'message' => 'x']
+        );
         $wrapped->debuginfo = 'Invalid external api parameter: the value is "abc", the server was expecting "int" type';
         $text = dispatcher::error_result($wrapped)['content'][0]['text'];
         $this->assertStringContainsString('Error [invalidparameter]', $text);

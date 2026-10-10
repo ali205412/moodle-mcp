@@ -30,6 +30,7 @@ use webservice_mcp\local\auth\connector_service_manager;
 use webservice_mcp\local\auth\credential_manager;
 use webservice_mcp\local\files\transfer_exception;
 use webservice_mcp\local\mcp\call_context;
+use webservice_mcp\local\ui\rest_tools;
 use webservice_mcp\local\ui\session_bridge;
 use webservice_mcp\local\ui\tools;
 
@@ -43,6 +44,7 @@ require_once(__DIR__ . '/fixtures/session_bridge_fake_transport.php');
  *
  * @package    webservice_mcp
  * @covers     \webservice_mcp\local\ui\tools
+ * @covers     \webservice_mcp\local\ui\rest_tools
  */
 final class ui_tools_test extends advanced_testcase {
     /** @var string Sesskey the fake site hands out. */
@@ -124,15 +126,23 @@ final class ui_tools_test extends advanced_testcase {
     public function test_availability(): void {
         $this->resetAfterTest();
         $ctx = $this->setup_site(fn() => self::page('Home', ''));
-        $this->assertSame(['moodle_page_view', 'moodle_page_action', 'moodle_page_submit'],
-            array_column(tools::describe($ctx), 'name'));
+        $this->assertSame(
+            ['moodle_page_view', 'moodle_page_action', 'moodle_page_submit'],
+            array_slice(array_column(tools::describe($ctx), 'name'), 0, 3)
+        );
         $view = tools::describe($ctx)[0];
         $this->assertTrue($view['annotations']['readOnlyHint']);
         $this->assertTrue(tools::describe($ctx)[2]['annotations']['destructiveHint']);
 
         $course = $this->getDataGenerator()->create_course();
-        $restricted = new call_context(call_context::ERA_MODERN, '2026-07-28', $ctx->user,
-            \context_course::instance($course->id), $ctx->serviceid, true);
+        $restricted = new call_context(
+            call_context::ERA_MODERN,
+            '2026-07-28',
+            $ctx->user,
+            \context_course::instance($course->id),
+            $ctx->serviceid,
+            true
+        );
         $this->assertSame([], tools::describe($restricted), 'Course-restricted tokens cannot browse arbitrary pages.');
 
         set_config('uibridge', 0, 'webservice_mcp');
@@ -232,5 +242,156 @@ final class ui_tools_test extends advanced_testcase {
         $this->assertSame('file', $result['structuredContent']['type']);
         $this->assertStringStartsWith('moodle://file/', $result['structuredContent']['file']['uri']);
         $this->assertSame('logs.csv', $result['structuredContent']['file']['filename']);
+    }
+
+    /**
+     * Skip REST tests where Moodle has no routed REST API.
+     */
+    private function require_rest_api(): void {
+        if (!rest_tools::supported()) {
+            $this->markTestSkipped('This Moodle has no routed REST API.');
+        }
+    }
+
+    /**
+     * REST tools are listed with the bridge; mutability and scope follow the method.
+     */
+    public function test_rest_tools_listed_and_scoped(): void {
+        $this->resetAfterTest();
+        $this->require_rest_api();
+        $ctx = $this->setup_site(fn() => ['status' => 200, 'headers' => ['content-type' => ['application/json']], 'body' => '{}']);
+        $tools = array_column(tools::describe($ctx), null, 'name');
+        $this->assertTrue($tools['moodle_rest_describe']['annotations']['readOnlyHint']);
+        $this->assertTrue($tools['moodle_rest_call']['annotations']['destructiveHint']);
+        $this->assertFalse(tools::is_mutating('moodle_rest_call', ['path' => '/x']));
+        $this->assertFalse(tools::is_mutating('moodle_rest_call', ['method' => 'get', 'path' => '/x']));
+        $this->assertTrue(tools::is_mutating('moodle_rest_call', ['method' => 'DELETE', 'path' => '/x']));
+
+        $readonly = new call_context(
+            $ctx->era,
+            $ctx->protocolversion,
+            $ctx->user,
+            $ctx->restrictedcontext,
+            $ctx->serviceid,
+            true,
+            'connector',
+            [],
+            $ctx->credentialid,
+            function (bool $write): void {
+                if ($write) {
+                    throw new transfer_exception(403, 'insufficient_scope', 'Read only.');
+                }
+            }
+        );
+        tools::execute('moodle_rest_call', ['path' => '/user/current/preferences'], $readonly);
+        try {
+            tools::execute(
+                'moodle_rest_call',
+                ['method' => 'POST', 'path' => '/user/current/preferences', 'body' => []],
+                $readonly
+            );
+            $this->fail('A read-only credential must not POST.');
+        } catch (transfer_exception $e) {
+            $this->assertSame('insufficient_scope', $e->errorcode);
+        }
+    }
+
+    /**
+     * Describe lists routes from Moodle's OpenAPI description and details one with references resolved.
+     */
+    public function test_rest_describe(): void {
+        $this->resetAfterTest();
+        $this->require_rest_api();
+        $ctx = $this->setup_site(fn() => self::page('Home', ''));
+
+        $list = tools::execute('moodle_rest_describe', ['search' => 'preferences'], $ctx)['structuredContent'];
+        $this->assertStringEndsWith('/api/rest/v2', $list['base']);
+        $routes = array_map(fn($r) => $r['method'] . ' ' . $r['path'], $list['routes']);
+        $this->assertContains('GET /user/{user}/preferences', $routes);
+        $this->assertContains('POST /user/{user}/preferences/{preference}', $routes);
+
+        $detail = tools::execute('moodle_rest_describe', ['path' => '/r.php/api/rest/v2/user/{user}/preferences',
+            'method' => 'GET'], $ctx)['structuredContent'];
+        $this->assertCount(1, $detail['routes']);
+        $this->assertSame('GET', $detail['routes'][0]['method']);
+        $this->assertStringNotContainsString('"$ref"', json_encode($detail['routes'][0]['parameters']));
+        $this->assertContains('user', array_column($detail['routes'][0]['parameters'], 'name'));
+
+        $this->expectException(transfer_exception::class);
+        tools::execute('moodle_rest_describe', ['path' => '/no/such/route'], $ctx);
+    }
+
+    /**
+     * The REST base and route path the tools build are the ones Moodle's router really serves.
+     */
+    public function test_rest_path_resolves_in_moodle_router(): void {
+        $this->resetAfterTest();
+        $this->require_rest_api();
+        \core\di::set(\core\router::class, \DI\autowire(\core\router::class)->constructorParameter('basepath', '/r.php'));
+        $app = \core\di::get(\core\router::class)->get_app();
+        $routing = new \Slim\Middleware\RoutingMiddleware(
+            $app->getRouteResolver(),
+            $app->getRouteCollector()->getRouteParser()
+        );
+
+        $path = '/r.php/api/rest/v2/user/current/preferences';
+        $request = $routing->performRouting(new \GuzzleHttp\Psr7\ServerRequest('GET', $path));
+        $route = $request->getAttribute(\Slim\Routing\RouteContext::ROUTE);
+        $this->assertNotNull($route);
+        $this->assertSame(\core_user\route\api\preferences::class . '::get_preferences', $route->getName());
+        $request = $routing->performRouting(new \GuzzleHttp\Psr7\ServerRequest('GET', '/r.php/api/rest/v2/openapi.json'));
+        $this->assertSame(
+            \core\router\apidocs::class . '::openapi_docs',
+            $request->getAttribute(\Slim\Routing\RouteContext::ROUTE)->getName()
+        );
+    }
+
+    /**
+     * Calls go through the bridge session with JSON in and out.
+     */
+    public function test_rest_call_through_bridge(): void {
+        $this->resetAfterTest();
+        $this->require_rest_api();
+        $ctx = $this->setup_site(fn(string $method) => ['status' => $method === 'DELETE' ? 404 : 200,
+            'headers' => ['content-type' => ['application/json']],
+            'body' => $method === 'DELETE' ? '{"message":"Not found"}' : '{"drawers-open-index":"1"}']);
+
+        $result = tools::execute('moodle_rest_call', ['path' => '/user/current/preferences', 'query' => ['a' => 'b c']], $ctx);
+        $last = end($this->transport->requests);
+        $this->assertSame('GET', $last['method']);
+        $this->assertStringEndsWith('/api/rest/v2/user/current/preferences?a=b%20c', $last['url']);
+        $this->assertContains('Accept: application/json', $last['headers']);
+        $this->assertNull($last['body']);
+        $this->assertSame(['drawers-open-index' => '1'], $result['structuredContent']['data']);
+        $this->assertSame('GET /user/current/preferences', $result['_meta']['org.moodle/auditdetail']);
+
+        tools::execute('moodle_rest_call', ['method' => 'POST', 'path' => '/user/current/preferences',
+            'body' => ['preferences' => ['drawers-open-index' => '1']]], $ctx);
+        $last = end($this->transport->requests);
+        $this->assertSame('POST', $last['method']);
+        $this->assertSame('{"preferences":{"drawers-open-index":"1"}}', $last['body']);
+        $this->assertContains('Content-Type: application/json', $last['headers']);
+
+        $result = tools::execute('moodle_rest_call', ['method' => 'DELETE', 'path' => '/x/1'], $ctx);
+        $this->assertSame('DELETE', end($this->transport->requests)['method']);
+        $this->assertSame(404, $result['structuredContent']['status']);
+
+        foreach (
+            [['path' => '/user/current/preferences?x=1'], ['path' => 'user'], ['path' => '/a', 'body' => ['x' => 1]],
+                ['path' => '/a', 'method' => 'TRACE']] as $args
+        ) {
+            try {
+                tools::execute('moodle_rest_call', $args, $ctx);
+                $this->fail('Expected invalidparameter for ' . json_encode($args));
+            } catch (transfer_exception $e) {
+                $this->assertSame('invalidparameter', $e->errorcode);
+            }
+        }
+        try {
+            tools::execute('moodle_rest_call', ['path' => '/../../login/logout.php'], $ctx);
+            $this->fail('Relative segments must be refused.');
+        } catch (transfer_exception $e) {
+            $this->assertSame('uibridgeurldenied', $e->errorcode);
+        }
     }
 }

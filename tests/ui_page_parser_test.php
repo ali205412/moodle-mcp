@@ -273,6 +273,11 @@ final class ui_page_parser_test extends advanced_testcase {
         $fence = str_repeat(chr(96), 3);
         $this->assertStringContainsString("{$fence}\ncode   kept\n  as is\n{$fence}", $text);
         $this->assertStringContainsString('[Form F1: Reply]', $text);
+        $this->assertStringContainsString('Subject [text: subject="Re: hello"]', $text);
+        $this->assertStringContainsString('[radio: size="l", checked] Large', $text);
+        $this->assertStringContainsString('[text: locked="x", disabled]', $text);
+        $this->assertStringNotContainsString('secret', $text);
+        $this->assertStringNotContainsString('abcDEF1234', $text);
         $this->assertMatchesRegularExpression('/\[Edit\]\[L\d+\]/', $text);
 
         $links = array_column($page['links'], 'url', 'text');
@@ -297,6 +302,62 @@ final class ui_page_parser_test extends advanced_testcase {
         $this->assertSame("Hello\nthere", $fields['message']['value']);
         $this->assertSame('o', $fields['outside']['value']);
         $this->assertCount(2, array_filter($form['fields'], fn($f) => $f['name'] === 'opts[]'));
+    }
+
+    /**
+     * Content inside forms (bulk-action table, grader-like table) is rendered in text, controls compactly, links numbered.
+     */
+    public function test_form_content_in_text(): void {
+        $page = page_parser::parse(
+            file_get_contents(__DIR__ . '/fixtures/ui/form_content.html'),
+            'https://moodle.example.org/grade/report/grader/index.php?id=7'
+        );
+        $text = $page['text'];
+
+        $this->assertStringContainsString("[Form F1: Participants]\n### Participants", $text);
+        $this->assertStringContainsString('Select users for a bulk action.', $text);
+        $this->assertStringContainsString('- Filtered: 2 users', $text);
+        $this->assertStringContainsString('[image: Status legend]', $text);
+        $this->assertMatchesRegularExpression(
+            '/\| Select \| Name \| Roles \|\n\| --- \| --- \| --- \|\n'
+                . '\| \[checkbox: user4="1", checked\] \| \[Ana Lopez\]\[L\d+\] \| Student \|/',
+            $text
+        );
+        $this->assertStringContainsString('With selected users... [select: formaction="Choose..."] [Go]', $text);
+        $this->assertStringContainsString('[/Form F1]', $text);
+
+        // Grader-like table: grade inputs in cells, screen-reader labels left out of text and form title.
+        $this->assertStringContainsString('[Form F2: Show per page]', $text);
+        $this->assertMatchesRegularExpression(
+            '/\| \[Ana Lopez\]\[L\d+\] \| \[number: grade\[4\]\[31\]="80\.00"\] \| 80\.00 \|/',
+            $text
+        );
+        $this->assertMatchesRegularExpression('/\| \[Ben Okafor\]\[L\d+\] \| \[number: grade\[5\]\[31\]\] \| - \|/', $text);
+        $this->assertStringContainsString('[select: perpage="Option 20"]', $text);
+        $this->assertStringNotContainsString('Option 7', $text);
+        $this->assertStringNotContainsString('hunter2', $text);
+        $this->assertStringNotContainsString('Ana Lopez Essay 1', $text);
+        $this->assertStringContainsString('[/Form F2]', $text);
+        // Per-cell action menus are left out of text and links; menus outside tables stay.
+        foreach (['Single view for this user', 'User report', 'Edit grade', 'Hide', 'Cell actions'] as $menuitem) {
+            $this->assertStringNotContainsString($menuitem, $text);
+        }
+        $this->assertMatchesRegularExpression('/\[More\]\s+\[Export\]\[L\d+\]/', $text);
+
+        // Every [text][Ln] reference in text names a link with that text; ids follow breadcrumb then document order.
+        $links = array_column($page['links'], null, 'id');
+        preg_match_all('/\[([^\[\]]+)\]\[(L\d+)\]/', $text, $refs, PREG_SET_ORDER);
+        $this->assertNotEmpty($refs);
+        foreach ($refs as [, $label, $id]) {
+            $this->assertSame($label, $links[$id]['text']);
+        }
+        $this->assertSame(
+            ['PHY 2', 'Grades overview', 'Ana Lopez', 'Ben Okafor', 'Essay 1', 'Export'],
+            array_column($page['links'], 'text')
+        );
+        $this->assertSame('https://moodle.example.org/user/view.php?id=4&course=7', $links['L3']['url']);
+        $this->assertCount(2, $page['forms']);
+        $this->assertSame('80.00', self::fields($page['forms'][1])['grade[4][31]']['value']);
     }
 
     /**

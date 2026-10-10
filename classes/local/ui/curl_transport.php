@@ -49,7 +49,7 @@ class curl_transport implements http_transport {
     /**
      * Send a request without following redirects.
      *
-     * @param string $method GET or POST.
+     * @param string $method HTTP method.
      * @param string $url Absolute URL (already policy-checked).
      * @param array $headers Request header lines.
      * @param string|array|null $body Request body.
@@ -96,7 +96,7 @@ class curl_transport implements http_transport {
                 return strlen($chunk);
             },
         ]);
-        if ($method === 'POST') {
+        if ($method === 'POST' || $body !== null) {
             curl_setopt($handle, CURLOPT_POSTFIELDS, $body ?? '');
         }
 

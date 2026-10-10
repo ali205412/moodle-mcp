@@ -27,7 +27,8 @@ use stdClass;
  *
  * Provisioning is create-only: once the service exists, admin changes (disabling it, restricting users,
  * removing functions, IP or expiry restrictions) are never overwritten. New external functions are added
- * by sync_service() from upgrade and a scheduled task, and functions an admin removed are never re-added.
+ * by sync_service() from upgrade and a scheduled task, functions an admin removed are never re-added, and links
+ * to functions Moodle no longer has are dropped.
  *
  * @package     webservice_mcp
  * @author      MohammadReza PourMohammad <onbirdev@gmail.com>
@@ -100,6 +101,7 @@ class connector_service_manager {
      * Add newly registered external functions to the plugin-owned service and record provisioned users.
      *
      * Functions that were provisioned before and are now missing were removed by an admin and stay removed.
+     * Links to functions that no longer exist in Moodle are deleted.
      *
      * @return stdClass|null The synced service, or null when there is no plugin-owned service.
      */
@@ -126,7 +128,8 @@ class connector_service_manager {
             [$serviceid]
         ), true);
 
-        foreach ($DB->get_fieldset_select('external_functions', 'name', '1 = 1', null, 'name ASC') as $functionname) {
+        $existing = $DB->get_fieldset_select('external_functions', 'name', '1 = 1', null, 'name ASC');
+        foreach ($existing as $functionname) {
             if (isset($provisioned[$functionname])) {
                 continue;
             }
@@ -134,6 +137,17 @@ class connector_service_manager {
                 $manager->add_external_function_to_service($functionname, $serviceid);
             }
             $this->insert_provisioned($serviceid, 'function', $functionname);
+        }
+
+        // Drop links to functions Moodle no longer has (removed by a core or plugin upgrade); their provisioned
+        // marker goes too, so a function that comes back is treated as new rather than as admin-removed.
+        foreach (array_keys(array_diff_key($linked, array_fill_keys($existing, true))) as $functionname) {
+            $manager->remove_external_function_from_service($functionname, $serviceid);
+            $DB->delete_records(self::PROVISION_TABLE, [
+                'serviceid' => $serviceid,
+                'itemtype' => 'function',
+                'itemname' => $functionname,
+            ]);
         }
 
         $knownusers = array_fill_keys($DB->get_fieldset_select(

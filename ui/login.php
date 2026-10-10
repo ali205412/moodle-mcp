@@ -27,7 +27,7 @@
 
 define('NO_DEBUG_DISPLAY', true);
 
-require(__DIR__ . '/../../../config.php');
+require(__DIR__ . '/../../../config.php'); // phpcs:ignore moodle.Files.RequireLogin.Missing -- this endpoint performs the login.
 
 use webservice_mcp\local\ui\session_bridge;
 

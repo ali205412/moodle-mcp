@@ -187,6 +187,55 @@ final class connector_service_manager_test extends advanced_testcase {
     }
 
     /**
+     * Test sync drops links to functions Moodle no longer has, from the connector service only.
+     */
+    public function test_sync_drops_links_to_removed_functions(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+        $user = $this->create_mcp_user();
+        $manager = new connector_service_manager();
+        $service = $manager->ensure_service_for_user((int)$user->id);
+        $otherid = $DB->insert_record('external_services', (object)[
+            'name' => 'Admin service', 'enabled' => 1, 'requiredcapability' => '', 'restrictedusers' => 0,
+            'component' => null, 'timecreated' => time(), 'timemodified' => time(), 'shortname' => 'adminservice',
+            'downloadfiles' => 0, 'uploadfiles' => 0,
+        ]);
+        foreach ([(int)$service->id, $otherid] as $serviceid) {
+            $DB->insert_record('external_services_functions', (object)[
+                'externalserviceid' => $serviceid, 'functionname' => 'core_removed_in_moodle_5',
+            ]);
+        }
+        $DB->insert_record('webservice_mcp_provision', (object)[
+            'serviceid' => $service->id, 'itemtype' => 'function', 'itemname' => 'core_removed_in_moodle_5',
+            'timecreated' => time(),
+        ]);
+        $DB->delete_records('external_services_functions', [
+            'externalserviceid' => $service->id,
+            'functionname' => 'core_webservice_get_site_info',
+        ]);
+
+        $manager->sync_service();
+
+        $this->assertFalse($DB->record_exists('external_services_functions', [
+            'externalserviceid' => $service->id, 'functionname' => 'core_removed_in_moodle_5',
+        ]));
+        $this->assertFalse($DB->record_exists('webservice_mcp_provision', [
+            'serviceid' => $service->id, 'itemtype' => 'function', 'itemname' => 'core_removed_in_moodle_5',
+        ]));
+        $this->assertTrue($DB->record_exists('external_services_functions', [
+            'externalserviceid' => $otherid, 'functionname' => 'core_removed_in_moodle_5',
+        ]), 'Other services are never touched.');
+        $this->assertFalse($DB->record_exists('external_services_functions', [
+            'externalserviceid' => $service->id, 'functionname' => 'core_webservice_get_site_info',
+        ]), 'Admin-removed functions stay removed.');
+        $this->assertSame(
+            $DB->count_records('external_functions'),
+            $DB->count_records('external_services_functions', ['externalserviceid' => $service->id]) + 1
+        );
+    }
+
+    /**
      * Test an existing service with the configured shortname that the plugin did not create is refused.
      */
     public function test_refuses_to_adopt_foreign_service(): void {

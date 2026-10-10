@@ -29,10 +29,10 @@ interface http_transport {
     /**
      * Send a request without following redirects.
      *
-     * @param string $method GET or POST.
+     * @param string $method HTTP method.
      * @param string $url Absolute URL (already policy-checked).
      * @param array $headers Request header lines ("Name: value").
-     * @param string|array|null $body Url-encoded string, multipart field array, or null.
+     * @param string|array|null $body Url-encoded or JSON string, multipart field array, or null.
      * @param int $maxbytes Largest body to accept.
      * @return array ['status' => int, 'headers' => [lowercase name => string[]], 'body' => string]
      * @throws \webservice_mcp\local\files\transfer_exception On network failure or an oversized body.
